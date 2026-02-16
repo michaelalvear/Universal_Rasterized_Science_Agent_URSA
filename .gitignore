@@ -1,0 +1,19 @@
+# --- Virtual Environments ---
+venv/
+
+# --- Environment Variables & Secrets ---
+.env
+
+# --- Data ---
+data/
+documents/
+
+# --- Python Internals ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# --- IDE Settings (PyCharm) ---
+.idea/
+*.iml

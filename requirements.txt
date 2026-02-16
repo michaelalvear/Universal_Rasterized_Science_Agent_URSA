@@ -1,0 +1,28 @@
+# Core AI and Logic
+langgraph
+langchain
+langchain_core
+pydantic
+
+# RAG
+chromadb
+langchain_chroma
+langchain_community
+pypdf
+langchain_text_splitters
+
+# Data Science and NetCDF
+xarray
+netcdf4
+dask
+pandas
+
+# Mapping and Geospatial
+geopy
+pyproj
+
+# Google Gemini Integration
+langchain_google_genai
+
+# Environment Variables Access
+python_dotenv
