@@ -1,23 +1,32 @@
-"""Testing tools + state schema integration"""
+"""
+Testing tools + state schema integration
+"""
 # For paths and environment variables
-import sys
 import os
+import sys
 from dotenv import load_dotenv
 
 # Modules under test
-sys.path.append(os.path.abspath("../src"))  # Add 'src' dir to the search path
+sys.path.append(os.path.abspath("../src"))  # Add "src" dir to the search path
 from tools import *
 from schemas import *
 
 # Langgraph/Langchain
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage
 from langgraph.prebuilt import ToolNode
 
 # Xarray
 import xarray as xr
 
-# ++++++++++ Initializing state variables ++++++++++
+# Catch unnecessary "data artifacts" from appearing in terminal
+import warnings
+
+warnings.filterwarnings("ignore", message="Degrees of freedom <= 0 for slice")
+warnings.filterwarnings("ignore", message="All-NaN slice encountered")
+warnings.filterwarnings("ignore", message="Mean of empty slice")
+
+# ++++++++++ Initializing Tool Calls ++++++++++
 bisect_context_retriever_call = {
     "name": "bisect_context_retriever",
     "args": {
@@ -34,21 +43,54 @@ dataset_metadata_retriever_call = {
     "type": "tool_call"
 }
 
-see_gallery_contents_call = {
-    "name": "see_gallery_contents",
-    "args": {},
+spatial_temporal_select_call = {
+    "name": "spatial_temporal_select",
+    "args": {
+        "kwargs": {
+            "x": [572125, 592125],
+            "y": [2810601, 2830601],
+            "time": ["2016-01-01", "2016-01-31"]
+        }
+    },
+    "id": "call_3",
+    "type": "tool_call"
+}
+
+filter_by_value_call = {
+    "name": "filter_by_value",
+    "args": {
+        "target": "salinity",
+        "symbol": ">",
+        "value": 35.0
+    },
+    "id": "call_4",
+    "type": "tool_call"
+}
+
+resample_time_series_call = {
+    "name": "resample_time_series",
+    "args": {
+        "freq": "1MS",
+        "method": "mean"
+    },
     "id": "call_5",
     "type": "tool_call"
 }
 
-map_slicer_call = {
-    "name": "map_slicer",
+reduce_dimension_call = {
+    "name": "reduce_dimension",
     "args": {
-        "x_min": "582125.24",
-        "y_min": "2820601.01",
-        "start_time": "2016-01-01"
+        "dim": "time",
+        "method": "max"
     },
-    "id": "call_3",
+    "id": "call_6",
+    "type": "tool_call"
+}
+
+inspect_selection_call = {
+    "name": "inspect_selection",
+    "args": {},
+    "id": "call_7",
     "type": "tool_call"
 }
 
@@ -57,104 +99,76 @@ geocoding_tool_call = {
     "args": {
         "location_name": "Biscayne National Park"
     },
-    "id": "call_4",
+    "id": "call_8",
     "type": "tool_call"
 }
 
-tool_node_message = AIMessage(
+tool_node_1_message = AIMessage(
     content="",
     tool_calls=[bisect_context_retriever_call,
                 dataset_metadata_retriever_call,
-                see_gallery_contents_call,
-                map_slicer_call,
+                spatial_temporal_select_call,
+                filter_by_value_call,
+                resample_time_series_call,
+                reduce_dimension_call,
                 geocoding_tool_call]
 )
 
-load_dotenv()
-DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"))
-
-selection = {
-    "x": 582125.24,
-    "y": 2820601.01,
-    "time": "2016-01-01"
-}
-
-sample_bundle = SliceBundle(
-    map_slice=DS["salinity"].sel(selection, method="nearest"),
-    description="sample description",
-    tool_origin="sample origin"
+tool_node_2_message = AIMessage(
+    content="",
+    tool_calls=[inspect_selection_call]
 )
-
-sample_gallery = MapGallery()
-
-sample_gallery.add_bundle(sample_bundle)
-
-initial_state = {
-    "messages": [tool_node_message],
-    "dataset": DS,
-    "map_gallery": sample_gallery
-}
 
 # ++++++++++ Graph setup ++++++++++
 graph = StateGraph(AgentState)
 
-tool_node = ToolNode(tools=[map_slicer,
-                            geocoding_tool,
-                            see_gallery_contents,
-                            dataset_metadata_retriever,
-                            bisect_context_retriever])
+tool_node_1 = ToolNode(tools=[
+    bisect_context_retriever,
+    dataset_metadata_retriever,
+    spatial_temporal_select,
+    filter_by_value,
+    resample_time_series,
+    reduce_dimension,
+    geocoding_tool
+])
 
 
-def gallery_update_node(state: AgentState):
-    '''
-    Finds all ToolMessages in the most recent update that contain
-    a SliceBundle artifact and pushes them to the gallery.
-    '''
-
-    # Get the current message list
-    messages = state.messages
-    if not messages:
-        return {}
-
-    # Look at the last ToolMessages to look for "artifact" fields
-
-    new_bundles = []
-    # Iterate backwards through the messages until we hit the AI's request
-    for msg in reversed(messages):
-        if isinstance(msg, ToolMessage):
-            # Check if this specific tool message has a bundle
-            if isinstance(msg.artifact, SliceBundle):
-                new_bundles.append(msg.artifact)
-        else:
-            # We reached the AIMessage that triggered these tools
-            break
-
-    # Return the update
-    if new_bundles:
-        update_gallery = MapGallery()
-        for bundle in reversed(new_bundles):
-            update_gallery.add_bundle(bundle)
-        # We reverse them back so they are in chronological order
-        return {"map_gallery": update_gallery}
-    else:
-        return {}
+def new_tool_calls_node(state: AgentState):
+    """
+    Updates the state with new tool calls for the second phase of tests
+    """
+    return {"messages": tool_node_2_message}
 
 
-graph.add_node("tool node", tool_node)
-graph.add_node("gallery update node", gallery_update_node)
+tool_node_2 = ToolNode(tools=[
+    inspect_selection
+])
 
-graph.add_edge(START, "tool node")
-graph.add_edge("tool node", "gallery update node")
-graph.add_edge("gallery update node", END)
+graph.add_node("tool node 1", ursa_tool_node)
+graph.add_node("new tool calls node", new_tool_calls_node)
+graph.add_node("tool node 2", ursa_tool_node)
+
+graph.add_edge(START, "tool node 1")
+graph.add_edge("tool node 1", "new tool calls node")
+graph.add_edge("new tool calls node", "tool node 2")
+graph.add_edge("tool node 2", END)
 
 app = graph.compile()
 
-# ++++++++++ Check test results ++++++++++
+# ++++++++++ Check Test Results ++++++++++
+load_dotenv()
+DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"))
+
+initial_state = {
+    "messages": [tool_node_1_message],
+    "dataset": DS,
+}
+
+final_state = app.invoke(initial_state)
+
 print(f"\n{'=' * 30}")
 print("TEST START")
 print(f"{'=' * 30}\n")
-
-final_state = app.invoke(initial_state)
 for msg in final_state["messages"]:
     # Skip the initial "AI message", just show the Tool responses
     if msg.type == "tool":
@@ -167,15 +181,3 @@ for msg in final_state["messages"]:
 print(f"\n{'=' * 30}")
 print("TEST END")
 print(f"{'=' * 30}\n")
-
-# ++++++++++ See final gallery contents ++++++++++
-print(f"\n{'=' * 30}")
-print("FINAL GALLERY:")
-print(f"{'=' * 30}\n")
-
-for index, bundle in final_state["map_gallery"].bundles.items():
-    print(f"\n{'+' * 40}")
-    print(f"INDEX: {index}")
-    print(f"DESCRIPTION: {bundle.description}")
-    print(f"TOOL ORIGIN: {bundle.tool_origin}")
-    print(f"{'+' * 40}\n")

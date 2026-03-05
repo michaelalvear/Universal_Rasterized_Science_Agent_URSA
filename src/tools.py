@@ -6,8 +6,6 @@ from dotenv import load_dotenv
 
 # Essential LangChain/LangGraph packages
 from langchain_core.tools import tool
-from langchain_core.tools import InjectedToolCallId
-from langchain_core.messages import ToolMessage
 from langchain.tools import InjectedState
 
 # Chroma/RAG
@@ -21,13 +19,13 @@ from geopy.geocoders import GoogleV3
 from pyproj import Transformer
 
 # Type hinting/validation
-from pydantic import BaseModel, Field
-from typing import Annotated, Optional, Dict, List, Tuple, Any
-from xarray import Dataset
-from datetime import date as dt_date
+from typing import Literal, Union
+from langchain_core.messages import AIMessage, ToolMessage
+import xarray as xr
+from schemas import *
 
-# Schemas
-from schemas import SliceBundle, MapGallery
+# Operators
+import operator
 
 load_dotenv()  # Load environment variables
 
@@ -59,11 +57,13 @@ custom_doc_prompt = PromptTemplate.from_template(
 
 # This is the actual StructuredTool
 # A function that formats retriever output into a string
-bisect_context_retriever = create_retriever_tool(retriever=retriever,
-                                                 name="bisect_context_retriever",
-                                                 description="Search and return relevant portions of the bisect paper.",
-                                                 document_prompt=custom_doc_prompt,
-                                                 response_format="content")
+bisect_context_retriever = create_retriever_tool(
+    retriever=retriever,
+    name="bisect_context_retriever",
+    description="Search and return relevant portions of the bisect paper.",
+    document_prompt=custom_doc_prompt,
+    response_format="content"
+)
 
 
 # ++++++++++++++++++++ Dataset Metadata Retrieval ++++++++++++++++++++
@@ -71,108 +71,177 @@ bisect_context_retriever = create_retriever_tool(retriever=retriever,
 @tool("dataset_metadata_retriever")
 def dataset_metadata_retriever(
         # Gets the entire src Dataset
-        ds: Annotated[Dataset, InjectedState("dataset")]
+        ds: Annotated[xr.Dataset, InjectedState("dataset")]
 ) -> str:
     """This tool allows you to see the metadata of the entire dataset"""
     metadata = str(ds)
     return metadata
 
 
-# ++++++++++++++++++++ Gallery Context ++++++++++++++++++++
-
-# See gallery contents
-@tool("see_gallery_contents")
-def see_gallery_contents(
-        # Gets the current map gallery from the state
-        gallery: Annotated[MapGallery, InjectedState("map_gallery")]
-) -> Dict[str, List[str]]:
+# ++++++++++++++++++++ See Selection Details ++++++++++++++++++++
+@tool("inspect_selection")
+def inspect_selection(
+        ds: Annotated[Optional[xr.Dataset],
+                      InjectedState("active_selection")]
+) -> str:
     """
-    Returns a dictionary describing
-    the indices and contents in the map gallery
+    Statistical summary of the active_slice.
+    Global filters are assumed to handle DOF/NaN warnings.
     """
+    if ds is None:
+        return "No active selection found."
 
-    gallery_description = {}
+    summary = {}
 
-    """This gives a description of what's currently in the map gallery"""
-    for index, bundle in gallery.bundles.items():
-        key = f"INDEX {index}: "
-        value = [f"DESCRIPTION: {bundle.description}",
-                 f"TOOL_ORIGIN: {bundle.tool_origin}"]
-        gallery_description[key] = value
+    for var in ds.data_vars:
+        da = ds[var]
 
-    return gallery_description
+        # If the slice is empty (0 pixels), don't even try math
+        if da.size == 0:
+            summary[var] = {"error": "Empty selection"}
+            continue
 
-
-# ++++++++++++++++++++ Populate Map Gallery ++++++++++++++++++++
-class MapSlicerInput(BaseModel):
-    """Input schema for map slicer"""
-    x_min: float = Field(description="X-coordinate start.")
-    x_max: Optional[float] = Field(default=None,
-                                   description="X-coordinate end (only for ranges).")
-
-    y_min: float = Field(description="Y-coordinate start.")
-    y_max: Optional[float] = Field(default=None,
-                                   description="Y-coordinate end (only for ranges).")
-
-    start_time: dt_date = Field(description="Start date (YYYY-MM-DD).")
-    end_time: Optional[dt_date] = Field(default=None,
-                                        description="End date (only for ranges).")
-
-
-@tool("map_slicer", args_schema=MapSlicerInput,
-      response_format="content_and_artifact")
-def map_slicer(
-        # Automagically gets the corresponding tool call ID
-        tool_call_id: Annotated[str, InjectedToolCallId],
-        # Fetches the whole xarray dataset from the state
-        ds: Annotated[Dataset, InjectedState("dataset")],
-        x_min: float,
-        y_min: float,
-        start_time: dt_date,
-        x_max: Optional[float] = None,
-        y_max: Optional[float] = None,
-        end_time: Optional[dt_date] = None,
-) -> Tuple[str, Any]:
-    """
-    Use this tool to add a map slice to your map gallery.
-    - Provide only 'min' values for a single point.
-    - Provide 'min' and 'max' values for a range or area.
-  """
-
-    # Helper to determine if we are slicing or selecting
-    def get_selector(min, max):
-        if max == None:
-            return min
-        else:
-            return slice(min, max)
-
-    try:
-        # Dynamically build the selection dictionary
-        selection = {
-            "x": get_selector(x_min, x_max),
-            "y": get_selector(y_min, y_max),
-            "time": get_selector(start_time, end_time)
+        # Simple, direct calculations
+        summary[var] = {
+            "mean": round(float(da.mean()), 2),
+            "max": round(float(da.max()), 2),
+            "min": round(float(da.min()), 2),
+            "std": round(float(da.std()), 2),
+            "units": da.attrs.get("units", "unknown"),
+            "long_name": da.attrs.get("long_name", var),
+            "null_percentage": round(float(da.isnull().mean() * 100), 1)
         }
 
-        # Apply selection
-        map_slice = ds["salinity"].sel(selection, method="nearest")
+    coords_info = {
+        dim: {
+            "size": ds.sizes[dim],
+            "range": [float(ds[dim].min()), float(ds[dim].max())]
+        } for dim in ds.dims
+    }
 
-        # Create a description for the new map slice
-        description = "Metadata:\n" + str(map_slice)
+    return f"Data Profile: {{'variable_stats': {summary}, 'coordinates': {coords_info}}}"
 
-        new_slice_bundle = SliceBundle(map_slice=map_slice,
-                                       description=description,
-                                       tool_origin="map_slicer")
 
-        content = "Slice created succesfully"
-        artifact = new_slice_bundle
-        return content, artifact
+# ++++++++++++++++++++ Changing View ++++++++++++++++++++
 
-    except Exception as e:
-        content = f"Query failed: {str(e)}"
-        artifact = None
+# Define the specific "Vocabulary" of your NetCDF file This prevents the
+# LLM from hallucinating variable names like 'temp' or 'depth'
 
-        return content, artifact
+Variable = Literal["salinity"]
+Dimension = Literal["x", "y", "time"]
+MathSymbol = Literal[">", "<", ">=", "<=", "==", "!="]
+StatsMethod = Literal["mean", "max", "min", "std", "median"]
+TimeFreq = Literal[
+    "1D", "1W", "1MS", "1YS"]  # Daily, Weekly, Month Start, Year Start
+
+
+class SpatialTemporalSelectSchema(BaseModel):
+    kwargs: Dict[
+        Dimension, Union[float, str, List[Union[float, str]]]] = Field(
+        ...,
+        description="Coordinate constraints. Use [min, max] for a range or a "
+                    "single value. Supports numbers for spatial (x, y) and "
+                    "strings for time.",
+        example={"x": [580000, 585000], "time": "2026-01-01"}
+    )
+
+
+class FilterByValueSchema(BaseModel):
+    target: Variable = Field(...,
+                             description="The variable to filter (e.g., "
+                                         "'salinity').")
+    symbol: MathSymbol = Field(..., description="The comparison operator.")
+    value: float = Field(..., description="The threshold value.")
+
+
+class ResampleTimeSeriesSchema(BaseModel):
+    freq: TimeFreq = Field(..., description="Temporal grouping frequency.")
+    method: StatsMethod = Field(...,
+                                description="Aggregation method (e.g., "
+                                            "'mean').")
+
+
+class ReduceDimensionSchema(BaseModel):
+    dim: Dimension = Field(..., description="The dimension to collapse.")
+    method: StatsMethod = Field(..., description="The reduction method.")
+
+
+@tool(name_or_callable="spatial_temporal_select",
+      args_schema=SpatialTemporalSelectSchema)
+def spatial_temporal_select(
+        kwargs: Dict[Dimension, Union[float, List[float]]],
+        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+) -> xr.Dataset:
+    """Slices the dataset by space (x, y) or time coordinates.
+    Use for subsetting."""
+    selection = ds
+    slices = {}
+    points = {}
+
+    for k, v in kwargs.items():
+        if isinstance(v, list):
+            # Check coordinate direction for xarray slice
+            if selection[k].values[0] > selection[k].values[-1]:
+                slices[k] = slice(max(v), min(v))
+            else:
+                slices[k] = slice(min(v), max(v))
+        else:
+            points[k] = v
+
+    if slices:
+        selection = selection.sel(slices)
+    if points:
+        selection = selection.sel(points, method="nearest")
+
+    return selection
+
+
+@tool(name_or_callable="filter_by_value", args_schema=FilterByValueSchema)
+def filter_by_value(
+        target: Variable,
+        symbol: MathSymbol,
+        value: float,
+        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+) -> xr.Dataset:
+    """Applies a mask to data based on values (e.g., keep salinity > 30)."""
+
+    # This dictionary maps string symbols to functional logic.
+    ops = {
+        ">": operator.gt,
+        "<": operator.lt,
+        ">=": operator.ge,
+        "<=": operator.le,
+        "==": operator.eq,
+        "!=": operator.ne
+    }
+
+    condition = ops[symbol](ds[target], value)
+    new_ds = ds.copy()
+    new_ds[target] = new_ds[target].where(condition)
+    return new_ds
+
+
+@tool(name_or_callable="resample_time_series",
+      args_schema=ResampleTimeSeriesSchema)
+def resample_time_series(
+        freq: TimeFreq,
+        method: StatsMethod,
+        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+) -> xr.Dataset:
+    """Aggregates the time dimension into larger bins (e.g., Monthly Mean)."""
+    resampler = ds.resample(time=freq)
+    return getattr(resampler, method)()
+
+
+@tool(name_or_callable="reduce_dimension", args_schema=ReduceDimensionSchema)
+def reduce_dimension(
+        dim: Dimension,
+        method: StatsMethod,
+        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+) -> xr.Dataset:
+    """Collapses a dimension entirely. Use 'time' to create a map,
+    or 'x'/'y' for profiles."""
+    return getattr(ds, method)(dim=dim)
 
 
 # ++++++++++++++++++++ Geocoding ++++++++++++++++++++
@@ -223,8 +292,10 @@ class GeocodingInput(BaseModel):
 
 
 # Tool logic
-UTM_17_EASTING_RANGE = (
-    160000, 840000)  # Constants for UTM Zone 17N valid range
+
+# --- BISECT model bounds ---
+left, right = 461000.0, 590500.0
+top, bottom = 2872000.0, 2779000.0
 
 
 @tool("geocoding_tool", args_schema=GeocodingInput)
@@ -244,8 +315,9 @@ def geocoding_tool(location_name: str) -> dict[str, Any]:
 
     easting, northing = latlon_to_utm17(location.latitude, location.longitude)
 
-    # If easting is in the proper UTM 17 range (A.K.A around Florida longitude)
-    if UTM_17_EASTING_RANGE[0] <= easting <= UTM_17_EASTING_RANGE[1]:
+    # Check If coordinates are in the proper range
+    # (A.K.A around South Florida )
+    if left <= easting <= right and bottom <= northing <= top:
         return {
             "easting": round(easting, 2),
             "northing": round(northing, 2),
@@ -257,3 +329,77 @@ def geocoding_tool(location_name: str) -> dict[str, Any]:
             "easting": easting,
             "northing": northing
         }
+
+
+# ++++++++++++++++++++ Custom Tool Node  ++++++++++++++++++++
+def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Executes tools that return xr.Datasets and updates the graph state.
+    """
+    tools_by_name = {
+        t.name: t for t in [
+            bisect_context_retriever,
+            dataset_metadata_retriever,
+            spatial_temporal_select,
+            filter_by_value,
+            resample_time_series,
+            reduce_dimension,
+            inspect_selection,
+            geocoding_tool
+        ]
+    }
+
+    last_message = state.messages[-1]
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        return {"messages": []}
+
+    new_messages = []
+    current_ds = state.dataset if not state.active_selection else state.active_selection
+
+    for tool_call in last_message.tool_calls:
+        name = tool_call["name"]
+        call_id = tool_call["id"]
+
+        if name not in tools_by_name:
+            new_messages.append(ToolMessage(content=f"Error: {name} not found",
+                                            tool_call_id=call_id))
+            continue
+
+        try:
+            # 1. Execute tool with the current dataset from state
+            # We use .invoke to handle the InjectedState automatically
+            result = tools_by_name[name].invoke(
+                {**tool_call["args"], "ds": current_ds})
+
+            # 2. Update the tracking variable so the next tool call in the loop
+            # sees the result of this one.
+            if isinstance(result, (xr.Dataset, xr.DataArray)):
+
+                current_ds = result
+
+                # Make sure the result of a tool is a DataSet in case it gets
+                # flattened to a DataArray in one of the tools
+                current_ds = current_ds.to_dataset() if isinstance(current_ds,
+                                                                   xr.DataArray) else current_ds
+
+                # Provide a high-level summary as the tool's response to the LLM
+                summary = f"Operation successful. New shape: {dict(current_ds.sizes)}"
+                new_messages.append(
+                    ToolMessage(content=summary, tool_call_id=call_id,
+                                name=name))
+            else:
+                new_messages.append(
+                    ToolMessage(content=str(result), tool_call_id=call_id,
+                                name=name))
+
+        except Exception as e:
+            new_messages.append(
+                ToolMessage(content=f"Error: {str(e)}", tool_call_id=call_id,
+                            name=name))
+
+    # 3. Return the final modified dataset and the messages
+    return {
+        "active_selection": current_ds,
+        # This overwrites the state with the final result
+        "messages": new_messages  # This appends the tool feedback to history
+    }

@@ -16,6 +16,7 @@ xarray
 netcdf4
 dask
 pandas
+numpy
 
 # Mapping and Geospatial
 geopy
