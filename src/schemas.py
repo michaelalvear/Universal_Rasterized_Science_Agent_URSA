@@ -1,9 +1,9 @@
 """
 This file holds pydantic models related to the Langgraph Agent's State
 """
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Annotated, List, Dict, Optional, Any
-from xarray import Dataset, DataArray
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+from typing import Annotated, List, Optional
+from xarray import Dataset
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
@@ -27,3 +27,10 @@ class AgentState(BaseModel):
         description="The current focused data slice being analyzed or "
                     "visualized"
     )
+
+    @model_validator(mode='after')
+    def sync_active_selection(self) -> 'AgentState':
+        if self.active_selection is None:
+            # If we didn't provide a slice, start with the whole thing
+            self.active_selection = self.dataset
+        return self

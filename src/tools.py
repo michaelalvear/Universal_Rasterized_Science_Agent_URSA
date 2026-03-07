@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 # Essential LangChain/LangGraph packages
 from langchain_core.tools import tool
-from langchain.tools import InjectedState
+from langgraph.prebuilt import InjectedState
 
 # Chroma/RAG
 from langchain_chroma import Chroma
@@ -19,9 +19,10 @@ from geopy.geocoders import GoogleV3
 from pyproj import Transformer
 
 # Type hinting/validation
-from typing import Literal, Union
+from typing import Literal, Union, Dict, Any
 from langchain_core.messages import AIMessage, ToolMessage
 import xarray as xr
+from inspect import signature
 from schemas import *
 
 # Operators
@@ -71,9 +72,10 @@ bisect_context_retriever = create_retriever_tool(
 @tool("dataset_metadata_retriever")
 def dataset_metadata_retriever(
         # Gets the entire src Dataset
-        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+        dataset: Annotated[xr.Dataset, InjectedState]
 ) -> str:
     """This tool allows you to see the metadata of the entire dataset"""
+    ds = dataset
     metadata = str(ds)
     return metadata
 
@@ -81,13 +83,13 @@ def dataset_metadata_retriever(
 # ++++++++++++++++++++ See Selection Details ++++++++++++++++++++
 @tool("inspect_selection")
 def inspect_selection(
-        ds: Annotated[Optional[xr.Dataset],
-                      InjectedState("active_selection")]
+        current_ds: Annotated[Optional[xr.Dataset], InjectedState]
 ) -> str:
     """
     Statistical summary of the active_slice.
     Global filters are assumed to handle DOF/NaN warnings.
     """
+    ds = current_ds
     if ds is None:
         return "No active selection found."
 
@@ -169,19 +171,19 @@ class ReduceDimensionSchema(BaseModel):
 @tool(name_or_callable="spatial_temporal_select",
       args_schema=SpatialTemporalSelectSchema)
 def spatial_temporal_select(
-        kwargs: Dict[Dimension, Union[float, List[float]]],
-        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+        kwargs: Dict[Dimension, Union[float, str, List[Union[float, str]]]],
+        current_ds: Annotated[xr.Dataset, InjectedState]
 ) -> xr.Dataset:
     """Slices the dataset by space (x, y) or time coordinates.
     Use for subsetting."""
-    selection = ds
+    ds = current_ds
     slices = {}
     points = {}
 
     for k, v in kwargs.items():
         if isinstance(v, list):
             # Check coordinate direction for xarray slice
-            if selection[k].values[0] > selection[k].values[-1]:
+            if ds[k].values[0] > ds[k].values[-1]:
                 slices[k] = slice(max(v), min(v))
             else:
                 slices[k] = slice(min(v), max(v))
@@ -189,11 +191,11 @@ def spatial_temporal_select(
             points[k] = v
 
     if slices:
-        selection = selection.sel(slices)
+        ds = ds.sel(slices)
     if points:
-        selection = selection.sel(points, method="nearest")
+        ds = ds.sel(points, method="nearest")
 
-    return selection
+    return ds
 
 
 @tool(name_or_callable="filter_by_value", args_schema=FilterByValueSchema)
@@ -201,10 +203,10 @@ def filter_by_value(
         target: Variable,
         symbol: MathSymbol,
         value: float,
-        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+        current_ds: Annotated[xr.Dataset, InjectedState]
 ) -> xr.Dataset:
     """Applies a mask to data based on values (e.g., keep salinity > 30)."""
-
+    ds = current_ds
     # This dictionary maps string symbols to functional logic.
     ops = {
         ">": operator.gt,
@@ -226,9 +228,10 @@ def filter_by_value(
 def resample_time_series(
         freq: TimeFreq,
         method: StatsMethod,
-        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+        current_ds: Annotated[xr.Dataset, InjectedState]
 ) -> xr.Dataset:
     """Aggregates the time dimension into larger bins (e.g., Monthly Mean)."""
+    ds = current_ds
     resampler = ds.resample(time=freq)
     return getattr(resampler, method)()
 
@@ -237,11 +240,20 @@ def resample_time_series(
 def reduce_dimension(
         dim: Dimension,
         method: StatsMethod,
-        ds: Annotated[xr.Dataset, InjectedState("dataset")]
+        current_ds: Annotated[xr.Dataset, InjectedState]
 ) -> xr.Dataset:
     """Collapses a dimension entirely. Use 'time' to create a map,
     or 'x'/'y' for profiles."""
+    ds = current_ds
     return getattr(ds, method)(dim=dim)
+
+
+@tool(name_or_callable="reset_view")
+def reset_view(dataset: Annotated[xr.Dataset, InjectedState]):
+    """Resets the active view of the data back to the original dataset,
+    so you can make new queries."""
+    ds = dataset
+    return ds
 
 
 # ++++++++++++++++++++ Geocoding ++++++++++++++++++++
@@ -344,6 +356,7 @@ def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
             filter_by_value,
             resample_time_series,
             reduce_dimension,
+            reset_view,
             inspect_selection,
             geocoding_tool
         ]
@@ -354,7 +367,11 @@ def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
         return {"messages": []}
 
     new_messages = []
-    current_ds = state.dataset if not state.active_selection else state.active_selection
+    current_ds = state.active_selection
+    argument_map = {
+        "dataset": state.dataset,
+        "active_selection": state.active_selection
+    }
 
     for tool_call in last_message.tool_calls:
         name = tool_call["name"]
@@ -365,13 +382,29 @@ def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
                                             tool_call_id=call_id))
             continue
 
-        try:
-            # 1. Execute tool with the current dataset from state
-            # We use .invoke to handle the InjectedState automatically
-            result = tools_by_name[name].invoke(
-                {**tool_call["args"], "ds": current_ds})
+        argument_map["current_ds"] = current_ds
 
-            # 2. Update the tracking variable so the next tool call in the loop
+        current_tool = tools_by_name[name]
+
+        # Start with arguments provided by the LLM
+        final_args = tool_call["args"].copy()
+
+        # Get complete list of tool parameters including injected params
+        sig = signature(current_tool.func)
+        expected_params = sig.parameters.keys()
+
+        # Loop through our mapping and fill missing pieces
+        for param_name, data_value in argument_map.items():
+            if param_name in expected_params:
+                # We inject the data only if the tool is asking for it by name
+                final_args[param_name] = data_value
+
+        try:
+            # Execute tool
+            # We use .invoke and manually inject our args
+            result = current_tool.invoke(final_args)
+
+            # Update the tracking variable so the next tool call in the loop
             # sees the result of this one.
             if isinstance(result, (xr.Dataset, xr.DataArray)):
 
@@ -382,11 +415,13 @@ def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
                 current_ds = current_ds.to_dataset() if isinstance(current_ds,
                                                                    xr.DataArray) else current_ds
 
-                # Provide a high-level summary as the tool's response to the LLM
+                # Provide a high-level summary as the tool's response to the
+                # LLM
                 summary = f"Operation successful. New shape: {dict(current_ds.sizes)}"
                 new_messages.append(
                     ToolMessage(content=summary, tool_call_id=call_id,
                                 name=name))
+
             else:
                 new_messages.append(
                     ToolMessage(content=str(result), tool_call_id=call_id,
@@ -397,9 +432,8 @@ def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
                 ToolMessage(content=f"Error: {str(e)}", tool_call_id=call_id,
                             name=name))
 
-    # 3. Return the final modified dataset and the messages
+    # Return the final modified dataset and the messages
     return {
-        "active_selection": current_ds,
-        # This overwrites the state with the final result
+        "active_selection": current_ds, # This overwrites the state with the final result
         "messages": new_messages  # This appends the tool feedback to history
     }

@@ -19,8 +19,7 @@ from stream_formatter import format_stream
 # Langgraph/Langchain
 from langgraph.graph import StateGraph, START, END
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-from langgraph.prebuilt import ToolNode
+from langchain_core.messages import SystemMessage, HumanMessage
 
 # Xarray
 import xarray as xr
@@ -28,19 +27,7 @@ import xarray as xr
 # Types
 from typing import Literal, List
 
-load_dotenv()
-
-tools = [
-    bisect_context_retriever,
-    dataset_metadata_retriever,
-    spatial_temporal_select,
-    filter_by_value,
-    resample_time_series,
-    reduce_dimension,
-    inspect_selection,
-    geocoding_tool
-]
-
+load_dotenv()  # Load environment variables
 
 # ++++++++++ Graph setup ++++++++++
 # Nodes (Some of the node code inspired by):
@@ -64,6 +51,18 @@ def end_session_router(
     else:
         return "request created"
 
+
+tools = [
+    bisect_context_retriever,
+    dataset_metadata_retriever,
+    spatial_temporal_select,
+    filter_by_value,
+    resample_time_series,
+    reduce_dimension,
+    inspect_selection,
+    reset_view,
+    geocoding_tool
+]
 
 # Initialize Gemini API + bind tools
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0,
@@ -151,21 +150,25 @@ as a small subset of the results of the model in the form of raster GIS data
 tracking surface salinity measurements of a baseline emissions scenario in 
 South Florida.
 
-Your can get context on the paper through the tools provided you.
+Your can get context on the paper through the tools provided to you.
 
 Reflect on any context you fetch, and keep retrieving until you have sufficient 
 context to answer the user's research request.
 
 *ALWAYS PROVIDE COMPLETE CITATIONS*
 
-You can also generate subset of the raster data called using the GIS tool suite
-provided too you. Follow argument schemas *EXACTLY*. 
+You can also extract a subset of the raster data using the GIS tool suite 
+provided too you for your own reference during the course of conversation. 
+Follow argument schemas *EXACTLY*. 
 
 The updated data after each operation is preserved in your state, so if you 
 need to perform a multistep operation you can.
 
 To see the a statistical summary of the extracted data held in your active 
 selection use the inspect_selection tool.
+
+To reset your view of the data back to the original data so you can run new
+operations use the reset_view tool.
 
 If the user asks a question that requires knowledge of coordinates use the 
 geocoding tool.
@@ -179,9 +182,8 @@ inputs = {"messages": [starting_prompt],
           "dataset": DS
           }
 
-# Initialize token counters
-total_input = 0
-total_output = 0
+# Initialize token counter
+total_tokens = 0
 
 # Running graph
 for s in app.stream(inputs, stream_mode="values"):
@@ -195,15 +197,10 @@ for s in app.stream(inputs, stream_mode="values"):
     if message.type == "ai" and hasattr(message,
                                         "usage_metadata") and message.usage_metadata:
         metadata = message.usage_metadata
-
-        message_input = metadata.get("input_tokens", 0)
-        message_output = metadata.get("output_tokens", 0)
-
-        total_input += message_input
-        total_output += message_output
+        total_tokens += metadata.get("total_tokens", 0)
 
 # Show the conversation's cumulative token use at the end
-token_string = f"|Token consumption: {total_input + total_output}|"
+token_string = f"|Token consumption: {total_tokens}|"
 bars = '-' * len(token_string)
 print(bars)
 print(token_string)

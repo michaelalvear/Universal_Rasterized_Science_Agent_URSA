@@ -19,12 +19,6 @@ from langgraph.prebuilt import ToolNode
 # Xarray
 import xarray as xr
 
-# Catch unnecessary "data artifacts" from appearing in terminal
-import warnings
-
-warnings.filterwarnings("ignore", message="Degrees of freedom <= 0 for slice")
-warnings.filterwarnings("ignore", message="All-NaN slice encountered")
-warnings.filterwarnings("ignore", message="Mean of empty slice")
 
 # ++++++++++ Initializing Tool Calls ++++++++++
 bisect_context_retriever_call = {
@@ -87,7 +81,7 @@ reduce_dimension_call = {
     "type": "tool_call"
 }
 
-inspect_selection_call = {
+inspect_selection_call_1 = {
     "name": "inspect_selection",
     "args": {},
     "id": "call_7",
@@ -103,7 +97,21 @@ geocoding_tool_call = {
     "type": "tool_call"
 }
 
-tool_node_1_message = AIMessage(
+reset_view_call = {
+    "name": "reset_view",
+    "args": {},
+    "id": "call_9",
+    "type": "tool_call"
+}
+
+inspect_selection_call_2 = {
+    "name": "inspect_selection",
+    "args": {},
+    "id": "call_10",
+    "type": "tool_call"
+}
+
+tool_node_message = AIMessage(
     content="",
     tool_calls=[bisect_context_retriever_call,
                 dataset_metadata_retriever_call,
@@ -111,57 +119,30 @@ tool_node_1_message = AIMessage(
                 filter_by_value_call,
                 resample_time_series_call,
                 reduce_dimension_call,
-                geocoding_tool_call]
+                inspect_selection_call_1,
+                geocoding_tool_call,
+                reset_view_call,
+                inspect_selection_call_2
+                ]
 )
 
-tool_node_2_message = AIMessage(
-    content="",
-    tool_calls=[inspect_selection_call]
-)
 
 # ++++++++++ Graph setup ++++++++++
 graph = StateGraph(AgentState)
 
-tool_node_1 = ToolNode(tools=[
-    bisect_context_retriever,
-    dataset_metadata_retriever,
-    spatial_temporal_select,
-    filter_by_value,
-    resample_time_series,
-    reduce_dimension,
-    geocoding_tool
-])
+graph.add_node("tool node", ursa_tool_node)
 
-
-def new_tool_calls_node(state: AgentState):
-    """
-    Updates the state with new tool calls for the second phase of tests
-    """
-    return {"messages": tool_node_2_message}
-
-
-tool_node_2 = ToolNode(tools=[
-    inspect_selection
-])
-
-graph.add_node("tool node 1", ursa_tool_node)
-graph.add_node("new tool calls node", new_tool_calls_node)
-graph.add_node("tool node 2", ursa_tool_node)
-
-graph.add_edge(START, "tool node 1")
-graph.add_edge("tool node 1", "new tool calls node")
-graph.add_edge("new tool calls node", "tool node 2")
-graph.add_edge("tool node 2", END)
+graph.add_edge(START, "tool node")
+graph.add_edge("tool node", END)
 
 app = graph.compile()
-
 # ++++++++++ Check Test Results ++++++++++
 load_dotenv()
 DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"))
 
 initial_state = {
-    "messages": [tool_node_1_message],
-    "dataset": DS,
+    "messages": [tool_node_message],
+    "dataset": DS
 }
 
 final_state = app.invoke(initial_state)
