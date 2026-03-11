@@ -15,7 +15,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # Geocoding
-from geopy.geocoders import GoogleV3
+from geopy.geocoders import Nominatim
 from pyproj import Transformer
 
 # Type hinting/validation
@@ -317,9 +317,7 @@ def geocoding_tool(location_name: str) -> dict[str, Any]:
     when you only have a place name.
     """
 
-    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
-    geolocator = GoogleV3(api_key=api_key)
-
+    geolocator = Nominatim(user_agent="ursa_hydrology")
     location = geolocator.geocode(location_name)
 
     if not location:

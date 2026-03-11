@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>URSA</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }
+    textarea { width: 100%; height: 80px; font-size: 14px; }
+    button { margin-top: 8px; padding: 8px 20px; font-size: 14px; cursor: pointer; }
+    #response { margin-top: 24px; white-space: pre-wrap; line-height: 1.6; }
+    #error { margin-top: 24px; color: red; }
+    #chart-container { margin-top: 24px; display: none; }
+  </style>
+</head>
+<body>
+
+  <h2>URSA — Hydrology Assistant</h2>
+
+  <textarea id="input" placeholder="Ask a question about the BISECT model or South Florida salinity..."></textarea>
+  <br>
+  <button onclick="submitQuery()">Submit</button>
+
+  <div id="error"></div>
+  <div id="response"></div>
+  <div id="chart-container">
+    <h1 id="chart-type-name"></h1>
+    <canvas id="chart"></canvas>
+  </div>
+
+  <script>
+    let activeChart = null;
+    let conversationHistory = [];  // stores {role, content} turns
+
+    async function submitQuery() {
+      const message = document.getElementById("input").value.trim();
+      if (!message) return;
+
+      document.getElementById("response").textContent = "Thinking...";
+      document.getElementById("error").textContent = "";
+      document.getElementById("chart-container").style.display = "none";
+      if (activeChart) { activeChart.destroy(); activeChart = null; }
+
+      try {
+        const res = await fetch("http://127.0.0.1:5000/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, history: conversationHistory })
+        });
+
+        const data = await res.json();
+
+        if (data.error) {
+          document.getElementById("error").textContent = "Error: " + data.error;
+          document.getElementById("response").textContent = "";
+        } else {
+          document.getElementById("response").textContent = data.textResponse;
+
+          // Append this exchange to history for the next request
+          conversationHistory.push({ role: "user",      content: message });
+          conversationHistory.push({ role: "assistant", content: data.textResponse });
+
+          if (data.chartType === "line") {
+            renderLineChart(data.labels, data.data);
+          } else if (data.chartType === "heatmap") {
+            renderHeatmap(data.labels, data.data);
+          }
+        }
+
+      } catch (err) {
+        document.getElementById("error").textContent = "Could not reach server: " + err.message;
+        document.getElementById("response").textContent = "";
+      }
+    }
+
+    function renderLineChart(labels, data) {
+      document.getElementById("chart-container").style.display = "block";
+      document.getElementById("chart-type-name").textContent = "this is a line chart";
+      const ctx = document.getElementById("chart").getContext("2d");
+      activeChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [{
+            label: "Salinity (ppt)",
+            data: data,
+            borderColor: "steelblue",
+            backgroundColor: "rgba(70, 130, 180, 0.1)",
+            fill: true,
+            tension: 0.1,
+            pointRadius: 2,
+            spanGaps: true
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { ticks: { maxTicksLimit: 12 } },
+            y: { title: { display: true, text: "Salinity (ppt)" } }
+          }
+        }
+      });
+    }
+
+    function renderHeatmap(labels, data) {
+      document.getElementById("chart-container").style.display = "block";
+      document.getElementById("chart-type-name").textContent = "this is a heat map chart";
+      const ctx = document.getElementById("chart").getContext("2d");
+      const xLen = labels.x.length;
+      const yLen = labels.y.length;
+      // Find max value for color scaling
+      const maxV = Math.max(...data.filter(d => d.v !== null).map(d => d.v));
+      activeChart = new Chart(ctx, {
+        type: "matrix",
+        data: {
+          datasets: [{
+            label: "Salinity (ppt)",
+            data: data,
+            backgroundColor(ctx) {
+              const v = ctx.dataset.data[ctx.dataIndex].v;
+              if (v === null) return "rgba(200,200,200,0.3)";
+              const norm = maxV > 0 ? v / maxV : 0;
+              // Blue (fresh) → orange (saline)
+              const r = Math.round(norm * 255);
+              const g = Math.round((1 - Math.abs(norm - 0.5) * 2) * 150);
+              const b = Math.round((1 - norm) * 255);
+              return `rgba(${r},${g},${b},0.85)`;
+            },
+            width: ({ chart }) => Math.max(1, (chart.chartArea || { width: xLen }).width / xLen - 1),
+            height: ({ chart }) => Math.max(1, (chart.chartArea || { height: yLen }).height / yLen - 1),
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { type: "linear", min: -0.5, max: xLen - 0.5, title: { display: true, text: "Easting index" } },
+            y: { type: "linear", min: -0.5, max: yLen - 0.5, title: { display: true, text: "Northing index" } }
+          }
+        }
+      });
+    }
+  </script>
+
+</body>
+</html>

@@ -13,7 +13,7 @@ from tools import *
 from schemas import *
 
 sys.path.append(
-    os.path.abspath("../utilities"))  # Add "utilities" dir to the search path
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../utilities")))
 from stream_formatter import format_stream
 
 # Langgraph/Langchain
@@ -23,6 +23,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 # Xarray
 import xarray as xr
+import numpy as np
 
 # Types
 from typing import Literal, List
@@ -96,28 +97,18 @@ def tool_router(state: AgentState) -> Literal["pending tool calls", "done"]:
 
 graph = StateGraph(AgentState)
 
-graph.add_node("user input", user_input)
 graph.add_node("tool node", ursa_tool_node)
 graph.add_node("llm call", llm_call)
 
 # Edges
-graph.add_edge(START, "user input")
-
-graph.add_conditional_edges(
-    "user input",
-    end_session_router,
-    {
-        "session ended": END,
-        "request created": "llm call"
-    }
-)
+graph.add_edge(START, "llm call")
 
 graph.add_conditional_edges(
     "llm call",
     tool_router,
     {
         "pending tool calls": "tool node",
-        "done": "user input"
+        "done": END
     }
 )
 
@@ -170,38 +161,139 @@ selection use the inspect_selection tool.
 To reset your view of the data back to the original data so you can run new
 operations use the reset_view tool.
 
-If the user asks a question that requires knowledge of coordinates use the 
+If the user asks a question that requires knowledge of coordinates use the
 geocoding tool.
+
+Use plain text only in your responses. Do not use markdown formatting such as
+**bold**, *italic*, or # headers.
+
+TOOL USE RULES — follow these strictly:
+- If the user asks to "show", "plot", "map", "chart", "graph", or "visualize"
+  any data, you MUST use the GIS tools to extract the data. Do not just
+  describe it in text.
+- For a time series at a location (e.g. "show salinity at X over time"):
+  use geocoding_tool to get coordinates, then spatial_temporal_select to
+  pin x and y to that point and select the time range.
+- For a spatial map (e.g. "show a map of salinity"):
+  use reduce_dimension with dim="time" to collapse time first.
+- Always call inspect_selection after extracting data to confirm the result
+  before giving your final response.
 """
 
-starting_prompt = SystemMessage(content=essential_context)
 DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"))
 
-# First message
-inputs = {"messages": [starting_prompt],
-          "dataset": DS
-          }
+# ++++++++++ Flask Interface ++++++++++
 
-# Initialize token counter
-total_tokens = 0
+def run_agent(user_message: str, history: list = None) -> dict:
+    """
+    Takes a user's natural language message, runs it through the agent,
+    and returns a dict: {text, chart_type, labels, data}.
+    Called by app.py's /query route.
 
-# Running graph
-for s in app.stream(inputs, stream_mode="values"):
-    # Get last message
-    message = s["messages"][-1]
+    history: list of {"role": "user"|"assistant", "content": str} dicts
+             representing prior turns in the conversation.
+    """
+    # Flatten history into a text block prepended to the current message.
+    # Injecting bare AIMessage objects into LangGraph's initial state causes
+    # the add_messages reducer to fail as history grows.
+    if history:
+        history_text = "\n".join(
+            f"{'User' if t['role'] == 'user' else 'Assistant'}: {t['content']}"
+            for t in history
+        )
+        full_message = f"[Previous conversation]\n{history_text}\n\n[Current message]\n{user_message}"
+    else:
+        full_message = user_message
 
-    # Display message
-    print(format_stream(message))
+    initial_state = {
+        "messages": [
+            SystemMessage(content=essential_context),
+            HumanMessage(content=full_message)
+        ],
+        "dataset": DS
+    }
 
-    # Collect token use information from llm
-    if message.type == "ai" and hasattr(message,
-                                        "usage_metadata") and message.usage_metadata:
-        metadata = message.usage_metadata
-        total_tokens += metadata.get("total_tokens", 0)
+    result = app.invoke(initial_state)
 
-# Show the conversation's cumulative token use at the end
-token_string = f"|Token consumption: {total_tokens}|"
-bars = '-' * len(token_string)
-print(bars)
-print(token_string)
-print(bars)
+    # Extract text, handling Gemini's list-of-blocks format
+    content = result["messages"][-1].content
+    if isinstance(content, list):
+        content = "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+
+    # Extract chart data from active_selection.
+    # active_selection always has a value (defaults to full DS via model_validator).
+    # We detect a meaningful slice by checking remaining dims:
+    #   - Full dataset has 3 dims: ["time", "y", "x"] → no chart
+    #   - 1D ["time"] → LLM pinned to a location, kept time range → line chart
+    #   - 2D ["y", "x"] → LLM collapsed time → heatmap
+    chart_type, labels, data = None, [], []
+    # Use .get() because active_selection only appears in result if a GIS tool
+    # ran and explicitly updated it. Text-only responses leave it absent.
+    # Fallback to DS gives 3 dims → no chart, which is correct behavior.
+    selection = result.get("active_selection", DS)
+    dims = set(selection.dims)
+
+    if dims == {"time"}:
+        # Time series at a single point
+        chart_type = "line"
+        labels = [str(t)[:10] for t in selection["time"].values]
+        raw = selection["salinity"].values.flatten()
+        data = [None if np.isnan(v) else round(float(v), 4) for v in raw]
+
+    elif dims == {"x", "y"}:
+        # Spatial map, time collapsed
+        total = selection.sizes["x"] * selection.sizes["y"]
+        if total <= 1000000000:
+            chart_type = "heatmap"
+            sal = selection["salinity"].transpose("y", "x")
+            x_coords = [round(float(v), 0) for v in selection["x"].values]
+            y_coords = [round(float(v), 0) for v in selection["y"].values]
+            grid = sal.values
+            flat = []
+            for yi in range(len(y_coords)):
+                for xi in range(len(x_coords)):
+                    v = grid[yi, xi]
+                    flat.append({
+                        "x": xi,
+                        "y": yi,
+                        "v": None if np.isnan(v) else round(float(v), 4)
+                    })
+            labels = {"x": x_coords, "y": y_coords}
+            data = flat
+
+    return {
+        "text": content,
+        "chart_type": chart_type,
+        "labels": labels,
+        "data": data
+    }
+
+
+# ++++++++++ Console Runner ++++++++++
+
+if __name__ == "__main__":
+    starting_prompt = SystemMessage(content=essential_context)
+
+    inputs = {"messages": [starting_prompt],
+              "dataset": DS
+              }
+
+    total_tokens = 0
+
+    for s in app.stream(inputs, stream_mode="values"):
+        message = s["messages"][-1]
+        print(format_stream(message))
+
+        if message.type == "ai" and hasattr(message,
+                                            "usage_metadata") and message.usage_metadata:
+            metadata = message.usage_metadata
+            total_tokens += metadata.get("total_tokens", 0)
+
+    token_string = f"|Token consumption: {total_tokens}|"
+    bars = '-' * len(token_string)
+    print(bars)
+    print(token_string)
+    print(bars)
