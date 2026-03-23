@@ -335,7 +335,8 @@ def geocoding_tool(location_name: str) -> dict[str, Any]:
         }
     else:
         return {
-            "error": f"Location '{location.address}' is outside the valid UTM 17N zone.",
+            "alert": f"Location '{location.address}' is outside the valid "
+                     f"UTM 17N zone. Coordinate projection may be inaccurate.",
             "easting": easting,
             "northing": northing
         }
