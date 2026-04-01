@@ -26,6 +26,9 @@ import numpy as np
 from inspect import signature
 from schemas import *
 
+# String formatting
+import json
+
 # Operators
 import operator
 
@@ -77,8 +80,59 @@ def dataset_metadata_retriever(
 ) -> str:
     """This tool allows you to see the metadata of the entire dataset"""
     ds = dataset
-    metadata = str(ds)
-    return metadata
+
+    # Capture spatial and temporal bounds
+    dims_info = {}
+    for dim in ds.dims:
+        d_min = ds[dim].min()
+        d_max = ds[dim].max()
+        if np.issubdtype(ds[dim].dtype, np.datetime64):
+            its_range = [str(np.datetime_as_string(d_min.values, unit='D')),
+                       str(np.datetime_as_string(d_max.values, unit='D'))]
+        else:
+            its_range = [round(float(d_min), 2), round(float(d_max), 2)]
+
+        dims_info[dim] = {
+            "size": int(ds.sizes[dim]), # Cast np.int64 to native int
+            "range": its_range
+        }
+
+    # Extract variable information (Skipping metadata scalars)
+    variables = {}
+    for var in ds.data_vars:
+        da = ds[var]
+        if da.ndim == 0 or "grid_mapping_name" in da.attrs:
+            continue
+
+        variables[var] = {
+            "dimensions": list(da.dims),
+            "units": str(da.attrs.get("units", "unknown")),
+            "long_name": str(da.attrs.get("long_name", var))
+        }
+
+    # Global attributes
+    # Convert to a standard dict to remove any xarray-specific formatting
+    # We iterate and cast each value to ensure no raw NumPy types remain
+    attrs = {}
+    for k, v in ds.attrs.items():
+        if isinstance(v, (np.integer, np.int64, np.int32)):
+            attrs[k] = int(v)
+        elif isinstance(v, (np.floating, np.float64, np.float32)):
+            attrs[k] = float(v)
+        elif isinstance(v, np.ndarray):
+            attrs[k] = v.tolist()
+        else:
+            attrs[k] = v # Native strings, bools, and None are already JSON safe
+
+    # Construct the final summary
+    summary = {
+        "dataset_title": attrs.get("title", "Untitled Dataset"),
+        "spatial_temporal_bounds": dims_info,
+        "data_variables": variables,
+        "global_metadata": attrs
+    }
+
+    return f"Dataset Overview:\n{json.dumps(summary, indent=2)}"
 
 
 # ++++++++++++++++++++ See Selection Details ++++++++++++++++++++
@@ -97,11 +151,11 @@ def inspect_selection(
 
     summary = {}
 
-    # Process Variable Statistics (Skipping metadata variables)
+    # Process variable statistics (skipping metadata variables)
     for var in ds.data_vars:
         da = ds[var]
 
-        # Skip Coordinate Reference System (CRS) or dummy variables
+        # Skip coordinate reference system (CRS) or dummy variables
         if da.ndim == 0 or "grid_mapping_name" in da.attrs:
             continue
 
