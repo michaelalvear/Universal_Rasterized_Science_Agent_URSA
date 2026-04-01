@@ -22,6 +22,7 @@ from pyproj import Transformer
 from typing import Literal, Union, Dict, Any
 from langchain_core.messages import AIMessage, ToolMessage
 import xarray as xr
+import numpy as np
 from inspect import signature
 from schemas import *
 
@@ -81,6 +82,7 @@ def dataset_metadata_retriever(
 
 
 # ++++++++++++++++++++ See Selection Details ++++++++++++++++++++
+
 @tool("inspect_selection")
 def inspect_selection(
         current_ds: Annotated[Optional[xr.Dataset], InjectedState]
@@ -95,15 +97,19 @@ def inspect_selection(
 
     summary = {}
 
+    # Process Variable Statistics (Skipping metadata variables)
     for var in ds.data_vars:
         da = ds[var]
+
+        # Skip Coordinate Reference System (CRS) or dummy variables
+        if da.ndim == 0 or "grid_mapping_name" in da.attrs:
+            continue
 
         # If the slice is empty (0 pixels), don't even try math
         if da.size == 0:
             summary[var] = {"error": "Empty selection"}
             continue
 
-        # Simple, direct calculations
         summary[var] = {
             "mean": round(float(da.mean()), 2),
             "max": round(float(da.max()), 2),
@@ -114,14 +120,28 @@ def inspect_selection(
             "null_percentage": round(float(da.isnull().mean() * 100), 1)
         }
 
-    coords_info = {
-        dim: {
-            "size": ds.sizes[dim],
-            "range": [float(ds[dim].min()), float(ds[dim].max())]
-        } for dim in ds.dims
-    }
+    # Process coordinate information
+    dims_info = {}
+    for dim in ds.dims:
+        d_min = ds[dim].min()
+        d_max = ds[dim].max()
 
-    return f"Data Profile: {{'variable_stats': {summary}, 'coordinates': {coords_info}}}"
+        # Handles formatting of time-based coordinates
+        if dim == 'time' or np.issubdtype(ds[dim].dtype, np.datetime64):
+            # Formats to human-readable strings like '2026-01-01'
+            its_range = [
+                str(np.datetime_as_string(d_min.values, unit='D')),
+                str(np.datetime_as_string(d_max.values, unit='D'))
+            ]
+        else:
+            # Standard numeric coordinates (e.g. x, y) can be floats
+            its_range = [round(float(d_min), 2), round(float(d_max), 2)]
+
+        dims_info[dim] = {
+            "range": its_range
+        }
+
+    return f"Selection Profile: {{'variable_stats': {summary}, 'dimensions': {dims_info}}}"
 
 
 # ++++++++++++++++++++ Changing View ++++++++++++++++++++
