@@ -37,9 +37,10 @@ def query():
 
         response = {
             "textResponse": result["text"],
-            "chartType": result["chart_type"],
-            "labels": result["labels"],
-            "data": result["data"],
+            "dims": result["dims"],
+            "charts": result["charts"],
+            "toolLog": result["toolLog"],
+            "selectionInfo": result["selectionInfo"],
         }
 
         return jsonify(response), 200
@@ -51,7 +52,13 @@ def query():
 
 @app.route("/dataset/info", methods=["GET"])
 def dataset_info():
-    from orchestration import DS
+    from orchestration import DS, _utm_to_latlon
+    x_min = float(DS["x"].min())
+    x_max = float(DS["x"].max())
+    y_min = float(DS["y"].min())
+    y_max = float(DS["y"].max())
+    lon_sw, lat_sw = _utm_to_latlon.transform(x_min, y_min)
+    lon_ne, lat_ne = _utm_to_latlon.transform(x_max, y_max)
     return jsonify({
         "variables": list(DS.data_vars),
         "time_range": {
@@ -59,13 +66,15 @@ def dataset_info():
             "end":   str(DS["time"].values[-1])[:10]
         },
         "spatial_bounds": {
-            "x_min": float(DS["x"].min()),
-            "x_max": float(DS["x"].max()),
-            "y_min": float(DS["y"].min()),
-            "y_max": float(DS["y"].max())
+            "x_min": x_min, "x_max": x_max,
+            "y_min": y_min, "y_max": y_max
+        },
+        "lat_lon_bounds": {
+            "sw": [round(lat_sw, 5), round(lon_sw, 5)],
+            "ne": [round(lat_ne, 5), round(lon_ne, 5)]
         }
     }), 200
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5001)

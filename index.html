@@ -2,146 +2,843 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>URSA</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
-    body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }
-    textarea { width: 100%; height: 80px; font-size: 14px; }
-    button { margin-top: 8px; padding: 8px 20px; font-size: 14px; cursor: pointer; }
-    #response { margin-top: 24px; white-space: pre-wrap; line-height: 1.6; }
-    #error { margin-top: 24px; color: red; }
-    #chart-container { margin-top: 24px; display: none; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0d0d14;
+      --bg2:         #12121e;
+      --bg3:         #1a1a2e;
+      --bg4:         #21213a;
+      --accent:      #818cf8;
+      --accent-dim:  #6366f1;
+      --border:      rgba(255,255,255,0.07);
+      --border-med:  rgba(255,255,255,0.12);
+      --text:        #e2e8f0;
+      --text2:       #94a3b8;
+      --text3:       #4a5568;
+      --user-bg:     #1e3558;
+      --radius:      12px;
+      --sidebar-w:   290px;
+    }
+
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+
+    /* ── APP SHELL ─────────────────────────────────── */
+    #app { display: flex; height: 100vh; overflow: hidden; }
+
+    /* ── SIDEBAR ───────────────────────────────────── */
+    #sidebar {
+      width: var(--sidebar-w);
+      min-width: var(--sidebar-w);
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    #sidebar::-webkit-scrollbar { width: 3px; }
+    #sidebar::-webkit-scrollbar-thumb { background: var(--border); }
+
+    #brand {
+      padding: 20px 18px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #brand-name {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+    }
+
+    #brand-sub {
+      font-size: 10px;
+      color: var(--text3);
+      letter-spacing: 0.06em;
+      margin-top: 2px;
+    }
+
+    .sidebar-section { padding: 14px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+
+    .sidebar-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-weight: 700;
+      color: var(--text3);
+      margin-bottom: 10px;
+    }
+
+    #coverage-map {
+      height: 188px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      background: var(--bg3);
+    }
+
+    #coverage-map-offline {
+      height: 188px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: var(--text3);
+    }
+
+    #selection-section { display: none; }
+
+    #selection-info {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
+      font-size: 11px;
+      color: var(--text2);
+      line-height: 2;
+    }
+
+    #selection-info .info-row { display: flex; justify-content: space-between; gap: 8px; }
+    #selection-info .info-key { color: var(--text3); }
+    #selection-info .info-val { color: var(--text); font-weight: 500; text-align: right; }
+
+    /* ── MAIN ──────────────────────────────────────── */
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+    /* ── CHAT THREAD ───────────────────────────────── */
+    #chat-thread {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #chat-thread::-webkit-scrollbar { width: 4px; }
+    #chat-thread::-webkit-scrollbar-track { background: transparent; }
+    #chat-thread::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ── WELCOME ───────────────────────────────────── */
+    #welcome {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+      padding: 48px 32px;
+      color: var(--text3);
+    }
+
+    #welcome-title {
+      font-size: 52px;
+      font-weight: 900;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      line-height: 1;
+    }
+
+    #welcome-sub { font-size: 15px; color: var(--text2); font-weight: 500; margin-top: 4px; }
+
+    #welcome-hint {
+      font-size: 13px;
+      max-width: 380px;
+      line-height: 1.65;
+      margin-top: 8px;
+    }
+
+    #welcome-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 16px;
+      max-width: 500px;
+    }
+
+    .welcome-chip {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 12px;
+      color: var(--text2);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .welcome-chip:hover { border-color: var(--accent); color: var(--accent); background: rgba(129,140,248,0.07); }
+
+    /* ── MESSAGES ──────────────────────────────────── */
+    .message-row {
+      padding: 18px 28px;
+      display: flex;
+    }
+
+    .message-row.user-row { justify-content: flex-end; }
+    .message-row.assistant-row { justify-content: flex-start; }
+
+    .message-row + .message-row { border-top: 1px solid var(--border); }
+
+    .user-bubble {
+      background: var(--user-bg);
+      border-radius: var(--radius);
+      border-bottom-right-radius: 3px;
+      padding: 11px 16px;
+      max-width: 72%;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #c7d9f5;
+      font-size: 14px;
+      line-height: 1.65;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    .assistant-card { width: 100%; max-width: 100%; }
+
+    .assistant-name {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.13em;
+      font-weight: 800;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+
+    .assistant-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.75;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    /* ── CHART BUTTONS ─────────────────────────────── */
+    .chart-btns { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+
+    .chart-btn {
+      background: var(--bg3);
+      border: 1px solid var(--border-med);
+      border-radius: 8px;
+      color: var(--text2);
+      padding: 5px 14px;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-weight: 500;
+    }
+
+    .chart-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(129,140,248,0.07); }
+    .chart-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(129,140,248,0.12); }
+
+    /* ── CHART AREA ────────────────────────────────── */
+    .chart-area { display: none; margin-top: 14px; }
+    .chart-area.visible { display: block; }
+    .chart-area canvas { max-width: 100%; border-radius: 8px; }
+
+    .heatmap-legend {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+      color: var(--text2);
+      margin-bottom: 8px;
+    }
+
+    .legend-bar {
+      flex: 1;
+      height: 10px;
+      border-radius: 3px;
+      background: linear-gradient(to right, #30123b, #3d449a, #4576c5, #3ba5d6, #26cad7, #35e17e, #91f141, #e3e329, #f89019, #e64a12, #7a0403);
+    }
+
+    .map-div {
+      height: 420px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    /* ── TOOL LOG ──────────────────────────────────── */
+    .tool-log { margin-top: 14px; }
+
+    .tool-log > summary {
+      font-size: 11px;
+      color: var(--text3);
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 0;
+      transition: color 0.15s;
+    }
+
+    .tool-log > summary::-webkit-details-marker { display: none; }
+
+    .tool-log > summary::before {
+      content: "▶";
+      font-size: 7px;
+      transition: transform 0.2s;
+    }
+
+    .tool-log[open] > summary::before { transform: rotate(90deg); }
+    .tool-log > summary:hover { color: var(--text2); }
+
+    .tool-log-content {
+      margin-top: 8px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
+      font-size: 11px;
+      color: var(--text2);
+      white-space: pre-wrap;
+      line-height: 1.75;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+
+    .tool-log-content::-webkit-scrollbar { width: 3px; }
+    .tool-log-content::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .log-call  { color: #93c5fd; }
+    .log-result { color: #86efac; }
+    .log-args  { color: var(--text3); }
+
+    /* ── THINKING DOTS ─────────────────────────────── */
+    .thinking { display: flex; gap: 5px; align-items: center; padding: 4px 0; }
+
+    .thinking span {
+      width: 7px; height: 7px;
+      background: var(--text3);
+      border-radius: 50%;
+      animation: blink 1.3s ease-in-out infinite;
+    }
+
+    .thinking span:nth-child(2) { animation-delay: 0.18s; }
+    .thinking span:nth-child(3) { animation-delay: 0.36s; }
+
+    @keyframes blink {
+      0%, 100% { opacity: 0.2; transform: scale(0.75); }
+      50%       { opacity: 1;   transform: scale(1); }
+    }
+
+    /* ── INPUT AREA ────────────────────────────────── */
+    #input-area {
+      flex-shrink: 0;
+      padding: 12px 28px 18px;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+    }
+
+    #error-msg { font-size: 12px; color: #f87171; margin-bottom: 8px; min-height: 16px; }
+
+    #input-wrapper {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      background: var(--bg3);
+      border: 1px solid var(--border-med);
+      border-radius: 14px;
+      padding: 10px 12px 10px 16px;
+      transition: border-color 0.2s;
+    }
+
+    #input-wrapper:focus-within { border-color: rgba(129,140,248,0.45); }
+
+    #input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      resize: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      line-height: 1.55;
+      height: 22px;
+      max-height: 130px;
+      overflow-y: auto;
+    }
+
+    #input::placeholder { color: var(--text3); }
+    #input::-webkit-scrollbar { width: 3px; }
+    #input::-webkit-scrollbar-thumb { background: var(--border); }
+
+    #submit-btn {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      background: var(--accent-dim);
+      border: none;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s, opacity 0.15s;
+      line-height: 1;
+    }
+
+    #submit-btn:hover:not(:disabled) { background: #4f46e5; }
+    #submit-btn:disabled { background: var(--bg4); color: var(--text3); cursor: not-allowed; }
+
+    #input-hint { margin-top: 7px; font-size: 11px; color: var(--text3); text-align: center; }
   </style>
 </head>
 <body>
 
-  <h2>URSA — Hydrology Assistant</h2>
+<div id="app">
 
-  <textarea id="input" placeholder="Ask a question about the BISECT model or South Florida salinity..."></textarea>
-  <br>
-  <button onclick="submitQuery()">Submit</button>
+  <!-- ── SIDEBAR ── -->
+  <aside id="sidebar">
+    <div id="brand">
+      <div id="brand-name">URSA</div>
+      <div id="brand-sub">Universal Rasterized Science Agent</div>
+    </div>
 
-  <div id="error"></div>
-  <div id="response"></div>
-  <div id="chart-container">
-    <h1 id="chart-type-name"></h1>
-    <canvas id="chart"></canvas>
-  </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Model Domain</div>
+      <div id="coverage-map"></div>
+    </div>
 
-  <script>
-    let activeChart = null;
-    let conversationHistory = [];  // stores {role, content} turns
+    <div class="sidebar-section" id="selection-section">
+      <div class="sidebar-label">Active Selection</div>
+      <div id="selection-info"></div>
+    </div>
+  </aside>
 
-    async function submitQuery() {
-      const message = document.getElementById("input").value.trim();
-      if (!message) return;
+  <!-- ── MAIN ── -->
+  <main id="main">
+    <div id="chat-thread">
+      <div id="welcome">
+        <div id="welcome-title">URSA</div>
+        <div id="welcome-sub">Biscayne &amp; Southern Everglades Coastal Transport</div>
+        <div id="welcome-hint">Ask questions about the BISECT hydrological model or explore South Florida salinity data from the baseline scenario.</div>
+        <div id="welcome-chips">
+          <div class="welcome-chip" onclick="useChip(this)">Show a spatial salinity map</div>
+          <div class="welcome-chip" onclick="useChip(this)">What is the BISECT model?</div>
+          <div class="welcome-chip" onclick="useChip(this)">Show salinity at Biscayne Bay over time</div>
+          <div class="welcome-chip" onclick="useChip(this)">What areas have the highest salinity?</div>
+        </div>
+      </div>
+    </div>
 
-      document.getElementById("response").textContent = "Thinking...";
-      document.getElementById("error").textContent = "";
-      document.getElementById("chart-container").style.display = "none";
-      if (activeChart) { activeChart.destroy(); activeChart = null; }
+    <div id="input-area">
+      <div id="error-msg"></div>
+      <div id="input-wrapper">
+        <textarea id="input" placeholder="Ask about the BISECT model or South Florida salinity..." rows="1"></textarea>
+        <button id="submit-btn" onclick="submitQuery()">&#x2191;</button>
+      </div>
+      <div id="input-hint">Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</div>
+    </div>
+  </main>
 
-      try {
-        const res = await fetch("http://127.0.0.1:5000/query", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, history: conversationHistory })
-        });
+</div>
 
-        const data = await res.json();
+<script>
+  // ── State ────────────────────────────────────────────────────────
+  let conversationHistory = [];   // {role, content} pairs sent to server
+  let msgData = [];               // full message objects for local display
+  const mapInstances  = {};       // Leaflet map per message index
+  const chartInstances = {};      // Chart.js instance per message index
 
-        if (data.error) {
-          document.getElementById("error").textContent = "Error: " + data.error;
-          document.getElementById("response").textContent = "";
-        } else {
-          document.getElementById("response").textContent = data.textResponse;
+  const chatThread = document.getElementById("chat-thread");
+  const inputEl    = document.getElementById("input");
+  const submitBtn  = document.getElementById("submit-btn");
+  const errorEl    = document.getElementById("error-msg");
+  let isThinking   = false;
 
-          // Append this exchange to history for the next request
-          conversationHistory.push({ role: "user",      content: message });
-          conversationHistory.push({ role: "assistant", content: data.textResponse });
+  // ── Coverage map ─────────────────────────────────────────────────
+  async function initCoverageMap() {
+    try {
+      const res  = await fetch("http://127.0.0.1:5001/dataset/info");
+      const info = await res.json();
+      const sw = info.lat_lon_bounds.sw;
+      const ne = info.lat_lon_bounds.ne;
+      const covMap = L.map("coverage-map", {
+        zoomControl: false, attributionControl: false,
+        dragging: false, scrollWheelZoom: false,
+        doubleClickZoom: false, touchZoom: false
+      });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(covMap);
+      L.rectangle([sw, ne], {
+        color: "#818cf8", weight: 2,
+        fillColor: "#6366f1", fillOpacity: 0.18
+      }).addTo(covMap);
+      covMap.fitBounds([sw, ne], { padding: [18, 18] });
+    } catch (e) {
+      const el = document.getElementById("coverage-map");
+      el.style.display = "flex";
+      el.style.alignItems = "center";
+      el.style.justifyContent = "center";
+      el.style.fontSize = "11px";
+      el.style.color = "#4a5568";
+      el.textContent = "Server offline";
+    }
+  }
+  initCoverageMap();
 
-          if (data.chartType === "line") {
-            renderLineChart(data.labels, data.data);
-          } else if (data.chartType === "heatmap") {
-            renderHeatmap(data.labels, data.data);
-          }
-        }
+  // ── Active selection sidebar ──────────────────────────────────────
+  function updateSelectionSidebar(si) {
+    if (!si) return;
+    const el  = document.getElementById("selection-info");
+    const sec = document.getElementById("selection-section");
 
-      } catch (err) {
-        document.getElementById("error").textContent = "Could not reach server: " + err.message;
-        document.getElementById("response").textContent = "";
-      }
+    const rows = [["Dims", si.dims.join(", ") || "none"]];
+    if (si.time_range) rows.push(["Time", `${si.time_range[0]} \u2192 ${si.time_range[1]}`]);
+    if (si.x_range)    rows.push(["X (m)", `${si.x_range[0].toLocaleString()} \u2013 ${si.x_range[1].toLocaleString()}`]);
+    if (si.y_range)    rows.push(["Y (m)", `${si.y_range[0].toLocaleString()} \u2013 ${si.y_range[1].toLocaleString()}`]);
+    if (si.salinity_min != null) {
+      rows.push(["Sal min", `${si.salinity_min} ppt`]);
+      rows.push(["Sal max", `${si.salinity_max} ppt`]);
+      rows.push(["Sal mean", `${si.salinity_mean} ppt`]);
+    }
+    rows.push(["Points", si.num_points.toLocaleString()]);
+
+    el.innerHTML = rows.map(([k, v]) =>
+      `<div class="info-row"><span class="info-key">${k}</span><span class="info-val">${v}</span></div>`
+    ).join("");
+    sec.style.display = "block";
+  }
+
+  // ── Welcome chip shortcut ─────────────────────────────────────────
+  function useChip(el) {
+    inputEl.value = el.textContent;
+    autoResize();
+    inputEl.focus();
+  }
+
+  // ── Add user message ──────────────────────────────────────────────
+  function addUserMessage(text) {
+    const welcome = document.getElementById("welcome");
+    if (welcome) welcome.remove();
+
+    const idx = msgData.length;
+    msgData.push({ role: "user", content: text });
+
+    const row    = document.createElement("div");
+    row.className = "message-row user-row";
+
+    const bubble  = document.createElement("div");
+    bubble.className = "user-bubble";
+    bubble.textContent = text;
+
+    row.appendChild(bubble);
+    chatThread.appendChild(row);
+    scrollBottom();
+    return idx;
+  }
+
+  // ── Thinking indicator ────────────────────────────────────────────
+  function addThinking() {
+    const row  = document.createElement("div");
+    row.id     = "thinking-row";
+    row.className = "message-row assistant-row";
+
+    const card = document.createElement("div");
+    card.className = "assistant-card";
+
+    const name = document.createElement("div");
+    name.className = "assistant-name";
+    name.textContent = "URSA";
+
+    const dots = document.createElement("div");
+    dots.className = "thinking";
+    dots.innerHTML = "<span></span><span></span><span></span>";
+
+    card.appendChild(name);
+    card.appendChild(dots);
+    row.appendChild(card);
+    chatThread.appendChild(row);
+    scrollBottom();
+  }
+
+  // ── Add assistant message ─────────────────────────────────────────
+  function addAssistantMessage(text, charts, toolLog, selectionInfo) {
+    const thinking = document.getElementById("thinking-row");
+    if (thinking) thinking.remove();
+
+    const idx = msgData.length;
+    msgData.push({ role: "assistant", content: text, charts, toolLog, selectionInfo });
+
+    const row  = document.createElement("div");
+    row.className = "message-row assistant-row";
+
+    const card = document.createElement("div");
+    card.className = "assistant-card";
+
+    // Name badge
+    const name = document.createElement("div");
+    name.className = "assistant-name";
+    name.textContent = "URSA";
+    card.appendChild(name);
+
+    // Response text
+    const textEl = document.createElement("div");
+    textEl.className = "assistant-text";
+    textEl.textContent = text;
+    card.appendChild(textEl);
+
+    // Chart buttons
+    const chartTypes = Object.keys(charts || {});
+    if (chartTypes.length > 0) {
+      const btns = document.createElement("div");
+      btns.className = "chart-btns";
+      chartTypes.forEach(type => {
+        const btn = document.createElement("button");
+        btn.className = "chart-btn";
+        btn.textContent = type === "line" ? "Line Chart" : type === "heatmap" ? "Heatmap" : type;
+        btn.onclick = () => renderChartInMessage(idx, type, charts[type], btn, btns);
+        btns.appendChild(btn);
+      });
+      card.appendChild(btns);
     }
 
-    function renderLineChart(labels, data) {
-      document.getElementById("chart-container").style.display = "block";
-      document.getElementById("chart-type-name").textContent = "this is a line chart";
-      const ctx = document.getElementById("chart").getContext("2d");
-      activeChart = new Chart(ctx, {
+    // Chart render area (per-message)
+    const chartArea = document.createElement("div");
+    chartArea.className = "chart-area";
+    chartArea.id = `chart-area-${idx}`;
+    card.appendChild(chartArea);
+
+    // Tool log
+    const logDetails = document.createElement("details");
+    logDetails.className = "tool-log";
+
+    const summary = document.createElement("summary");
+    const callCount = (toolLog || []).filter(e => e.type === "call").length;
+    summary.textContent = callCount > 0 ? `${callCount} tool call${callCount !== 1 ? "s" : ""}` : "No tools called";
+    logDetails.appendChild(summary);
+
+    const logContent = document.createElement("div");
+    logContent.className = "tool-log-content";
+
+    if (toolLog && toolLog.length > 0) {
+      const frag = document.createDocumentFragment();
+      toolLog.forEach((entry, i) => {
+        if (i > 0) {
+          const spacer = document.createTextNode("\n\n");
+          frag.appendChild(spacer);
+        }
+        if (entry.type === "call") {
+          const callLine = document.createElement("span");
+          callLine.className = "log-call";
+          callLine.textContent = `[CALL] ${entry.tool}`;
+          frag.appendChild(callLine);
+          const argsLine = document.createElement("span");
+          argsLine.className = "log-args";
+          argsLine.textContent = "\n  " + JSON.stringify(entry.args, null, 2).replace(/\n/g, "\n  ");
+          frag.appendChild(argsLine);
+        } else {
+          const resultLine = document.createElement("span");
+          resultLine.className = "log-result";
+          resultLine.textContent = `[RESULT] ${entry.tool}`;
+          frag.appendChild(resultLine);
+          const contentLine = document.createElement("span");
+          contentLine.className = "log-args";
+          contentLine.textContent = "\n  " + entry.content;
+          frag.appendChild(contentLine);
+        }
+      });
+      logContent.appendChild(frag);
+    } else {
+      logContent.textContent = "No tools called — answered from training data.";
+    }
+
+    logDetails.appendChild(logContent);
+    card.appendChild(logDetails);
+
+    row.appendChild(card);
+    chatThread.appendChild(row);
+    scrollBottom();
+  }
+
+  // ── Render chart inside a specific message ────────────────────────
+  function renderChartInMessage(msgIdx, type, chartData, clickedBtn, btnsContainer) {
+    btnsContainer.querySelectorAll(".chart-btn").forEach(b => b.classList.remove("active"));
+    clickedBtn.classList.add("active");
+
+    const chartArea = document.getElementById(`chart-area-${msgIdx}`);
+    if (!chartArea) return;
+
+    // Clean up existing instances for this message slot
+    if (chartInstances[msgIdx]) {
+      chartInstances[msgIdx].destroy();
+      delete chartInstances[msgIdx];
+    }
+    if (mapInstances[msgIdx]) {
+      mapInstances[msgIdx].remove();
+      delete mapInstances[msgIdx];
+    }
+
+    chartArea.innerHTML = "";
+    chartArea.className = "chart-area visible";
+
+    if (type === "line") {
+      const canvas = document.createElement("canvas");
+      chartArea.appendChild(canvas);
+
+      chartInstances[msgIdx] = new Chart(canvas.getContext("2d"), {
         type: "line",
         data: {
-          labels: labels,
+          labels: chartData.labels,
           datasets: [{
             label: "Salinity (ppt)",
-            data: data,
-            borderColor: "steelblue",
-            backgroundColor: "rgba(70, 130, 180, 0.1)",
+            data: chartData.data,
+            borderColor: "#818cf8",
+            backgroundColor: "rgba(129,140,248,0.07)",
             fill: true,
-            tension: 0.1,
+            tension: 0.15,
             pointRadius: 2,
-            spanGaps: true
+            spanGaps: true,
+            borderWidth: 2
           }]
         },
         options: {
           responsive: true,
+          plugins: {
+            legend: { labels: { color: "#94a3b8", font: { size: 12 } } }
+          },
           scales: {
-            x: { ticks: { maxTicksLimit: 12 } },
-            y: { title: { display: true, text: "Salinity (ppt)" } }
+            x: {
+              ticks: { maxTicksLimit: 12, color: "#4a5568" },
+              grid:  { color: "rgba(255,255,255,0.04)" }
+            },
+            y: {
+              title: { display: true, text: "Salinity (ppt)", color: "#94a3b8" },
+              ticks: { color: "#4a5568" },
+              grid:  { color: "rgba(255,255,255,0.04)" }
+            }
           }
         }
+      });
+
+    } else if (type === "heatmap") {
+      // Legend
+      const legend = document.createElement("div");
+      legend.className = "heatmap-legend";
+      legend.innerHTML = `<span>0 ppt (fresh)</span><div class="legend-bar"></div><span>${chartData.max_sal.toFixed(1)} ppt (saline)</span>`;
+      chartArea.appendChild(legend);
+
+      // Map container
+      const mapId  = `map-${msgIdx}`;
+      const mapDiv = document.createElement("div");
+      mapDiv.id    = mapId;
+      mapDiv.className = "map-div";
+      chartArea.appendChild(mapDiv);
+
+      // Defer Leaflet init until DOM is painted
+      requestAnimationFrame(() => {
+        const map = L.map(mapId);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "© OpenStreetMap contributors",
+          maxZoom: 19
+        }).addTo(map);
+
+        const bounds  = chartData.bounds;
+        const imgUrl  = "data:image/png;base64," + chartData.image_b64;
+        const cellM   = chartData.cell_size_m || 250;
+        const overlay = L.imageOverlay(imgUrl, bounds, { opacity: 0.85 }).addTo(map);
+
+        function updateBlur() {
+          const el = overlay.getElement();
+          if (!el) return;
+          const pxPerMeter = (256 * Math.pow(2, map.getZoom())) / 40075016;
+          const cellPx = cellM * pxPerMeter;
+          const blur = Math.min(18, Math.max(1, Math.round(cellPx * 0.4)));
+          el.style.filter = `blur(${blur}px)`;
+        }
+
+        overlay.on("add", updateBlur);
+        map.on("zoomend", updateBlur);
+        map.fitBounds(bounds);
+        mapInstances[msgIdx] = map;
       });
     }
 
-    function renderHeatmap(labels, data) {
-      document.getElementById("chart-container").style.display = "block";
-      document.getElementById("chart-type-name").textContent = "this is a heat map chart";
-      const ctx = document.getElementById("chart").getContext("2d");
-      const xLen = labels.x.length;
-      const yLen = labels.y.length;
-      // Find max value for color scaling
-      const maxV = Math.max(...data.filter(d => d.v !== null).map(d => d.v));
-      activeChart = new Chart(ctx, {
-        type: "matrix",
-        data: {
-          datasets: [{
-            label: "Salinity (ppt)",
-            data: data,
-            backgroundColor(ctx) {
-              const v = ctx.dataset.data[ctx.dataIndex].v;
-              if (v === null) return "rgba(200,200,200,0.3)";
-              const norm = maxV > 0 ? v / maxV : 0;
-              // Blue (fresh) → orange (saline)
-              const r = Math.round(norm * 255);
-              const g = Math.round((1 - Math.abs(norm - 0.5) * 2) * 150);
-              const b = Math.round((1 - norm) * 255);
-              return `rgba(${r},${g},${b},0.85)`;
-            },
-            width: ({ chart }) => Math.max(1, (chart.chartArea || { width: xLen }).width / xLen - 1),
-            height: ({ chart }) => Math.max(1, (chart.chartArea || { height: yLen }).height / yLen - 1),
-          }]
-        },
-        options: {
-          responsive: true,
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { type: "linear", min: -0.5, max: xLen - 0.5, title: { display: true, text: "Easting index" } },
-            y: { type: "linear", min: -0.5, max: yLen - 0.5, title: { display: true, text: "Northing index" } }
-          }
-        }
+    scrollBottom();
+  }
+
+  // ── Submit ────────────────────────────────────────────────────────
+  async function submitQuery() {
+    const message = inputEl.value.trim();
+    if (!message || isThinking) return;
+
+    isThinking = true;
+    submitBtn.disabled = true;
+    errorEl.textContent = "";
+    inputEl.value = "";
+    autoResize();
+
+    addUserMessage(message);
+    addThinking();
+
+    try {
+      const res  = await fetch("http://127.0.0.1:5001/query", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ message, history: conversationHistory })
       });
+
+      const data = await res.json();
+
+      if (data.error) {
+        const row = document.getElementById("thinking-row");
+        if (row) row.remove();
+        errorEl.textContent = "Error: " + data.error;
+      } else {
+        conversationHistory.push({ role: "user",      content: message });
+        conversationHistory.push({ role: "assistant", content: data.textResponse });
+        addAssistantMessage(data.textResponse, data.charts, data.toolLog, data.selectionInfo);
+        updateSelectionSidebar(data.selectionInfo);
+      }
+    } catch (err) {
+      const row = document.getElementById("thinking-row");
+      if (row) row.remove();
+      errorEl.textContent = "Could not reach server: " + err.message;
+    } finally {
+      isThinking = false;
+      submitBtn.disabled = false;
+      inputEl.focus();
     }
-  </script>
+  }
+
+  // ── Textarea auto-resize ──────────────────────────────────────────
+  function autoResize() {
+    inputEl.style.height = "auto";
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 130) + "px";
+  }
+
+  inputEl.addEventListener("input", autoResize);
+  inputEl.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitQuery();
+    }
+  });
+
+  function scrollBottom() {
+    requestAnimationFrame(() => {
+      chatThread.scrollTop = chatThread.scrollHeight;
+    });
+  }
+</script>
 
 </body>
 </html>

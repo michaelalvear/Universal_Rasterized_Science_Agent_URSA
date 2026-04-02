@@ -25,6 +25,18 @@ from langchain_core.messages import SystemMessage, HumanMessage
 import xarray as xr
 import numpy as np
 
+# Image generation for georeferenced overlay (replaces leaflet-heat KDE approach)
+import matplotlib
+matplotlib.use("Agg")  # Non-interactive backend; must be called before importing pyplot
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from io import BytesIO
+import base64
+
+# Coordinate conversion
+from pyproj import Transformer
+_utm_to_latlon = Transformer.from_crs("EPSG:26917", "EPSG:4326", always_xy=True)
+
 # Types
 from typing import Literal, List
 
@@ -223,52 +235,121 @@ def run_agent(user_message: str, history: list = None) -> dict:
             for block in content
         )
 
-    # Extract chart data from active_selection.
-    # active_selection always has a value (defaults to full DS via model_validator).
-    # We detect a meaningful slice by checking remaining dims:
-    #   - Full dataset has 3 dims: ["time", "y", "x"] → no chart
-    #   - 1D ["time"] → LLM pinned to a location, kept time range → line chart
-    #   - 2D ["y", "x"] → LLM collapsed time → heatmap
-    chart_type, labels, data = None, [], []
-    # Use .get() because active_selection only appears in result if a GIS tool
-    # ran and explicitly updated it. Text-only responses leave it absent.
-    # Fallback to DS gives 3 dims → no chart, which is correct behavior.
+    # Build tool log: extract every tool call and its result from the message chain.
+    # This lets the frontend show users exactly what the agent did.
+    tool_log = []
+    for msg in result["messages"]:
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                tool_log.append({
+                    "type": "call",
+                    "tool": tc["name"],
+                    "args": tc["args"]
+                })
+        elif hasattr(msg, "type") and msg.type == "tool":
+            tool_content = msg.content
+            if isinstance(tool_content, list):
+                tool_content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in tool_content
+                )
+            tool_log.append({
+                "type": "result",
+                "tool": getattr(msg, "name", "unknown"),
+                "content": str(tool_content)[:500]
+            })
+
+    # Build a charts dict keyed by chart type name.
+    # Only includes chart types that are valid for the resulting dims.
+    # The frontend uses this to render choice buttons after the agent responds.
     selection = result.get("active_selection", DS)
     dims = set(selection.dims)
+    charts = {}
+
+    # Build selection info: stats about the current active_selection slice.
+    sel_info = {
+        "dims": list(dims),
+        "num_points": int(selection["salinity"].size)
+    }
+    if "time" in dims:
+        sel_info["time_range"] = [
+            str(selection["time"].values[0])[:10],
+            str(selection["time"].values[-1])[:10]
+        ]
+    if "x" in dims:
+        sel_info["x_range"] = [
+            round(float(selection["x"].min()), 0),
+            round(float(selection["x"].max()), 0)
+        ]
+    if "y" in dims:
+        sel_info["y_range"] = [
+            round(float(selection["y"].min()), 0),
+            round(float(selection["y"].max()), 0)
+        ]
+    valid = selection["salinity"].values.flatten()
+    valid = valid[~np.isnan(valid)]
+    if len(valid) > 0:
+        sel_info["salinity_min"] = round(float(valid.min()), 4)
+        sel_info["salinity_max"] = round(float(valid.max()), 4)
+        sel_info["salinity_mean"] = round(float(valid.mean()), 4)
 
     if dims == {"time"}:
-        # Time series at a single point
-        chart_type = "line"
+        # Time series at a single point → line chart
         labels = [str(t)[:10] for t in selection["time"].values]
         raw = selection["salinity"].values.flatten()
         data = [None if np.isnan(v) else round(float(v), 4) for v in raw]
+        charts["line"] = {"labels": labels, "data": data}
 
     elif dims == {"x", "y"}:
-        # Spatial map, time collapsed
-        total = selection.sizes["x"] * selection.sizes["y"]
-        if total <= 1000000000:
-            chart_type = "heatmap"
-            sal = selection["salinity"].transpose("y", "x")
-            x_coords = [round(float(v), 0) for v in selection["x"].values]
-            y_coords = [round(float(v), 0) for v in selection["y"].values]
-            grid = sal.values
-            flat = []
-            for yi in range(len(y_coords)):
-                for xi in range(len(x_coords)):
-                    v = grid[yi, xi]
-                    flat.append({
-                        "x": xi,
-                        "y": yi,
-                        "v": None if np.isnan(v) else round(float(v), 4)
-                    })
-            labels = {"x": x_coords, "y": y_coords}
-            data = flat
+        # Spatial map, time collapsed → georeferenced image overlay.
+        # Each pixel = one real grid cell colored by its true salinity value.
+        # This preserves accuracy at all zoom levels (unlike leaflet-heat KDE).
+        sal = selection["salinity"]
+
+        # Ensure rows go north-to-south so the image top aligns with map north.
+        if sal["y"].values[0] < sal["y"].values[-1]:
+            sal = sal.isel(y=slice(None, None, -1))
+        grid = sal.transpose("y", "x").values  # shape (n_y, n_x)
+
+        max_sal = float(np.nanmax(grid)) if not np.all(np.isnan(grid)) else 1.0
+
+        # Apply turbo colormap (perceptually uniform blue→green→yellow→red).
+        # vmin=0 keeps fresh water anchored at the blue end of the scale.
+        cmap = plt.get_cmap("turbo")
+        norm = mcolors.Normalize(vmin=0, vmax=max_sal)
+        rgba = cmap(norm(grid))           # float RGBA array (n_y, n_x, 4)
+        rgba[np.isnan(grid), 3] = 0.0     # transparent for NaN (land/ocean mask)
+
+        buf = BytesIO()
+        plt.imsave(buf, rgba, format="png")
+        buf.seek(0)
+        img_b64 = base64.b64encode(buf.read()).decode("utf-8")
+
+        # Compute lat/lon bounds for Leaflet imageOverlay positioning.
+        x_vals = selection["x"].values
+        y_vals = selection["y"].values
+        lon_sw, lat_sw = _utm_to_latlon.transform(float(x_vals.min()), float(y_vals.min()))
+        lon_ne, lat_ne = _utm_to_latlon.transform(float(x_vals.max()), float(y_vals.max()))
+
+        # Cell size in meters — used by the frontend to compute zoom-adaptive blur.
+        cell_size_m = abs(float(x_vals[1] - x_vals[0])) if len(x_vals) > 1 else 250.0
+
+        charts["heatmap"] = {
+            "image_b64": img_b64,
+            "bounds": [
+                [round(lat_sw, 5), round(lon_sw, 5)],
+                [round(lat_ne, 5), round(lon_ne, 5)]
+            ],
+            "max_sal": round(max_sal, 4),
+            "cell_size_m": round(cell_size_m, 1)
+        }
 
     return {
         "text": content,
-        "chart_type": chart_type,
-        "labels": labels,
-        "data": data
+        "dims": list(dims),
+        "charts": charts,
+        "toolLog": tool_log,
+        "selectionInfo": sel_info
     }
 
 

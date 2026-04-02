@@ -1,22 +1,18 @@
-# --- Virtual Environments ---
-venv/
-
-# --- Environment Variables & Secrets ---
+# Environment — NEVER commit real keys
 .env
 
-# --- Data ---
-data/
-documents/
+# Large data files — too big for git, share separately
 *.nc
 *.pdf
 chroma_db/
 
-# --- Python Internals ---
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
 
-# --- IDE Settings (PyCharm) ---
-.idea/
-*.iml
+# macOS
+.DS_Store
