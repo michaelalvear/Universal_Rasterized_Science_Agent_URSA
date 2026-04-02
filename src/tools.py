@@ -88,12 +88,12 @@ def dataset_metadata_retriever(
         d_max = ds[dim].max()
         if np.issubdtype(ds[dim].dtype, np.datetime64):
             its_range = [str(np.datetime_as_string(d_min.values, unit='D')),
-                       str(np.datetime_as_string(d_max.values, unit='D'))]
+                         str(np.datetime_as_string(d_max.values, unit='D'))]
         else:
             its_range = [round(float(d_min), 2), round(float(d_max), 2)]
 
         dims_info[dim] = {
-            "size": int(ds.sizes[dim]), # Cast np.int64 to native int
+            "size": int(ds.sizes[dim]),  # Cast np.int64 to native int
             "range": its_range
         }
 
@@ -122,7 +122,8 @@ def dataset_metadata_retriever(
         elif isinstance(v, np.ndarray):
             attrs[k] = v.tolist()
         else:
-            attrs[k] = v # Native strings, bools, and None are already JSON safe
+            attrs[
+                k] = v  # Native strings, bools, and None are already JSON safe
 
     # Construct the final summary
     summary = {
@@ -164,14 +165,60 @@ def inspect_selection(
             summary[var] = {"error": "Empty selection"}
             continue
 
+        # Basic Stats
+        v_mean = round(float(da.mean()), 2)
+        v_max = round(float(da.max()), 2)
+        v_min = round(float(da.min()), 2)
+        v_std = round(float(da.std()), 2)
+        v_null_percentage = round(float(da.isnull().mean() * 100), 1)
+
+        # Find landmark (a.k.a. anomalous coordinates)
+
+        # These methods return a point datarray of the highest/lowest value
+
+        # For max
+        flat_max_idx = int(da.argmax()) # Find which index is the highest
+        indices = np.unravel_index(flat_max_idx, da.shape) # Find the grid this index lies in in the original DA
+        max_point_indexed = {dim: indices[i] for i, dim in enumerate(da.dims)} # Add labels to the grid index
+        max_info = da.isel(max_point_indexed) # Query the dataset for the point using the dictionary above
+
+        # For min
+        flat_min_idx = int(da.argmin())
+        indices = np.unravel_index(flat_min_idx, da.shape)
+        min_point_indexed = {dim: indices[i] for i, dim in enumerate(da.dims)}
+        min_info = da.isel(min_point_indexed)
+
+        # These dictionary extract the value of the coordinates
+        max_coord = {
+            dim: (
+                # Your suggested NumPy strategy
+                str(np.datetime_as_string(max_info[dim].values, unit='D'))
+                if np.issubdtype(max_info[dim].dtype, np.datetime64)
+                else round(float(max_info[dim]), 2)
+            )
+            for dim in da.dims
+        }
+
+        min_coord = {
+            dim: (
+                # Your suggested NumPy strategy
+                str(np.datetime_as_string(min_info[dim].values, unit='D'))
+                if np.issubdtype(min_info[dim].dtype, np.datetime64)
+                else round(float(min_info[dim]), 2)
+            )
+            for dim in da.dims
+        }
+
         summary[var] = {
-            "mean": round(float(da.mean()), 2),
-            "max": round(float(da.max()), 2),
-            "min": round(float(da.min()), 2),
-            "std": round(float(da.std()), 2),
+            "mean": v_mean,
+            "max": v_max,
+            "max_coord": max_coord,
+            "min": v_min,
+            "min_coord": min_coord,
+            "std": v_std,
             "units": da.attrs.get("units", "unknown"),
             "long_name": da.attrs.get("long_name", var),
-            "null_percentage": round(float(da.isnull().mean() * 100), 1)
+            "null_percentage": v_null_percentage
         }
 
     # Process coordinate information
@@ -506,6 +553,7 @@ def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
 
     # Return the final modified dataset and the messages
     return {
-        "active_selection": current_ds, # This overwrites the state with the final result
+        "active_selection": current_ds,
+        # This overwrites the state with the final result
         "messages": new_messages  # This appends the tool feedback to history
     }
