@@ -5,6 +5,9 @@
 *.nc
 *.pdf
 chroma_db/
+data/
+documents/
+
 
 # Python
 __pycache__/
@@ -16,3 +19,7 @@ venv/
 
 # macOS
 .DS_Store
+
+# IDE Settings (PyCharm)
+.idea/
+*.iml
