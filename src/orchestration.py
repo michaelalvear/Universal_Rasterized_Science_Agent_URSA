@@ -69,7 +69,7 @@ tools = [
 ]
 
 # Initialize Gemini API + bind tools
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0,
+llm = ChatGoogleGenerativeAI(model="gemini-3.1-pro-preview", temperature=0,
                              streaming=True).bind_tools(tools)
 
 
