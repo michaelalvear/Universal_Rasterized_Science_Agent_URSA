@@ -34,441 +34,458 @@ import operator
 
 load_dotenv()  # Load environment variables
 
-# ++++++++++++++++++++ RAG Retrieval ++++++++++++++++++++
-# Setting up vector store access
-embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
 
-# Connect to the existing DB directory
-vectorstore = Chroma(
-    persist_directory=os.getenv("CHROMADB_PATH"),
-    embedding_function=embeddings,
-    collection_name="BISECT"
-)
-
-# Creating the retriever, retrieves records in the form of "Document" objects
-retriever = vectorstore.as_retriever(
-    search_type="similarity",
-    search_kwargs={"k": 5}  # K is the amount of docs to return
-)
-
-# This template is passed to create_retriever_tool.
-# This tells the function how to stringify the text
-# of the retrieved Document objects along with their metadata (page_label)
-custom_doc_prompt = PromptTemplate.from_template(
-    "--- DOCUMENT CHUNK ---\n"
-    "SOURCE PAGE: {page_label}\n"
-    "CONTENT: {page_content}\n"
-)
-
-# This is the actual StructuredTool
-# A function that formats retriever output into a string
-bisect_context_retriever = create_retriever_tool(
-    retriever=retriever,
-    name="bisect_context_retriever",
-    description="Search and return relevant portions of the bisect paper.",
-    document_prompt=custom_doc_prompt,
-    response_format="content"
-)
-
-
-# ++++++++++++++++++++ Dataset Metadata Retrieval ++++++++++++++++++++
-
-@tool("dataset_metadata_retriever")
-def dataset_metadata_retriever(
-        # Gets the entire src Dataset
-        dataset: Annotated[xr.Dataset, InjectedState]
-) -> str:
-    """This tool allows you to see the metadata of the entire dataset"""
-    ds = dataset
-
-    # Capture spatial and temporal bounds
-    dims_info = {}
-    for dim in ds.dims:
-        d_min = ds[dim].min()
-        d_max = ds[dim].max()
-        if np.issubdtype(ds[dim].dtype, np.datetime64):
-            its_range = [str(np.datetime_as_string(d_min.values, unit='D')),
-                         str(np.datetime_as_string(d_max.values, unit='D'))]
-        else:
-            its_range = [round(float(d_min), 2), round(float(d_max), 2)]
-
-        dims_info[dim] = {
-            "size": int(ds.sizes[dim]),  # Cast np.int64 to native int
-            "range": its_range
-        }
-
-    # Extract variable information (Skipping metadata scalars)
-    variables = {}
-    for var in ds.data_vars:
-        da = ds[var]
-        if da.ndim == 0 or "grid_mapping_name" in da.attrs:
-            continue
-
-        variables[var] = {
-            "dimensions": list(da.dims),
-            "units": str(da.attrs.get("units", "unknown")),
-            "long_name": str(da.attrs.get("long_name", var))
-        }
-
-    # Global attributes
-    # Convert to a standard dict to remove any xarray-specific formatting
-    # We iterate and cast each value to ensure no raw NumPy types remain
-    attrs = {}
-    for k, v in ds.attrs.items():
-        if isinstance(v, (np.integer, np.int64, np.int32)):
-            attrs[k] = int(v)
-        elif isinstance(v, (np.floating, np.float64, np.float32)):
-            attrs[k] = float(v)
-        elif isinstance(v, np.ndarray):
-            attrs[k] = v.tolist()
-        else:
-            attrs[
-                k] = v  # Native strings, bools, and None are already JSON safe
-
-    # Construct the final summary
-    summary = {
-        "dataset_title": attrs.get("title", "Untitled Dataset"),
-        "spatial_temporal_bounds": dims_info,
-        "data_variables": variables,
-        "global_metadata": attrs
-    }
-
-    return f"Dataset Overview:\n{json.dumps(summary, indent=2)}"
-
-
-# ++++++++++++++++++++ See Selection Details ++++++++++++++++++++
-
-@tool("inspect_selection")
-def inspect_selection(
-        current_ds: Annotated[Optional[xr.Dataset], InjectedState]
-) -> str:
+def generate_tools(ds: xr.Dataset) -> List[Any]:
     """
-    Statistical and geospatial summary of the active_selection.
+    Dynamically generates a list of tools for the LLM, modifying argument
+    schemas according to dataset metadata.
     """
-    ds = current_ds
-    if ds is None:
-        return "No active selection found."
 
-    summary = {}
+    # ++++++++++++++++++++ RAG Retrieval ++++++++++++++++++++
+    # Setting up vector store access
+    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
 
-    # Process variable statistics (skipping metadata variables)
-    for var in ds.data_vars:
-        da = ds[var]
-
-        # Skip coordinate reference system (CRS) or dummy variables
-        if da.ndim == 0 or "grid_mapping_name" in da.attrs:
-            continue
-
-        # If the slice is empty (0 pixels), don't even try math
-        if da.size == 0:
-            summary[var] = {"error": "Empty selection"}
-            continue
-
-        # Basic Stats
-        v_mean = round(float(da.mean()), 2)
-        v_max = round(float(da.max()), 2)
-        v_min = round(float(da.min()), 2)
-        v_std = round(float(da.std()), 2)
-        v_null_percentage = round(float(da.isnull().mean() * 100), 1)
-
-        # Find landmark (a.k.a. anomalous coordinates)
-
-        # These methods return a point datarray of the highest/lowest value
-
-        # For max
-        flat_max_idx = int(da.argmax()) # Find which index is the highest
-        indices = np.unravel_index(flat_max_idx, da.shape) # Find the grid this index lies in in the original DA
-        max_point_indexed = {dim: indices[i] for i, dim in enumerate(da.dims)} # Add labels to the grid index
-        max_info = da.isel(max_point_indexed) # Query the dataset for the point using the dictionary above
-
-        # For min
-        flat_min_idx = int(da.argmin())
-        indices = np.unravel_index(flat_min_idx, da.shape)
-        min_point_indexed = {dim: indices[i] for i, dim in enumerate(da.dims)}
-        min_info = da.isel(min_point_indexed)
-
-        # These dictionary extract the value of the coordinates
-        max_coord = {
-            dim: (
-                # Your suggested NumPy strategy
-                str(np.datetime_as_string(max_info[dim].values, unit='D'))
-                if np.issubdtype(max_info[dim].dtype, np.datetime64)
-                else round(float(max_info[dim]), 2)
-            )
-            for dim in da.dims
-        }
-
-        min_coord = {
-            dim: (
-                # Your suggested NumPy strategy
-                str(np.datetime_as_string(min_info[dim].values, unit='D'))
-                if np.issubdtype(min_info[dim].dtype, np.datetime64)
-                else round(float(min_info[dim]), 2)
-            )
-            for dim in da.dims
-        }
-
-        summary[var] = {
-            "mean": v_mean,
-            "max": v_max,
-            "max_coord": max_coord,
-            "min": v_min,
-            "min_coord": min_coord,
-            "std": v_std,
-            "units": da.attrs.get("units", "unknown"),
-            "long_name": da.attrs.get("long_name", var),
-            "null_percentage": v_null_percentage
-        }
-
-    # Process coordinate information
-    dims_info = {}
-    for dim in ds.dims:
-        d_min = ds[dim].min()
-        d_max = ds[dim].max()
-
-        # Handles formatting of time-based coordinates
-        if dim == 'time' or np.issubdtype(ds[dim].dtype, np.datetime64):
-            # Formats to human-readable strings like '2026-01-01'
-            its_range = [
-                str(np.datetime_as_string(d_min.values, unit='D')),
-                str(np.datetime_as_string(d_max.values, unit='D'))
-            ]
-        else:
-            # Standard numeric coordinates (e.g. x, y) can be floats
-            its_range = [round(float(d_min), 2), round(float(d_max), 2)]
-
-        dims_info[dim] = {
-            "range": its_range
-        }
-
-    return f"Selection Profile: {{'variable_stats': {summary}, 'dimensions': {dims_info}}}"
-
-
-# ++++++++++++++++++++ Changing View ++++++++++++++++++++
-
-# Define the specific "Vocabulary" of your NetCDF file This prevents the
-# LLM from hallucinating variable names like 'temp' or 'depth'
-
-Variable = Literal["salinity"]
-Dimension = Literal["x", "y", "time"]
-MathSymbol = Literal[">", "<", ">=", "<=", "==", "!="]
-StatsMethod = Literal["mean", "max", "min", "std", "median"]
-TimeFreq = Literal[
-    "1D", "1W", "1MS", "1YS"]  # Daily, Weekly, Month Start, Year Start
-
-
-class SpatialTemporalSelectSchema(BaseModel):
-    kwargs: Dict[
-        Dimension, Union[float, str, List[Union[float, str]]]] = Field(
-        ...,
-        description="Coordinate constraints. Use [min, max] for a range or a "
-                    "single value. Takes spatial (x, y) and calendar dates "
-                    "for time.",
-        example={"x": [580000, 585000], "time": "2026-01-01"}
+    # Connect to the existing DB directory
+    vectorstore = Chroma(
+        persist_directory=os.getenv("CHROMADB_PATH"),
+        embedding_function=embeddings,
+        collection_name="BISECT"
     )
 
+    # Creating the retriever, retrieves records in the form of "Document" objects
+    retriever = vectorstore.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 5}  # K is the amount of docs to return
+    )
 
-class FilterByValueSchema(BaseModel):
-    target: Variable = Field(...,
-                             description="The variable to filter (e.g., "
-                                         "'salinity').")
-    symbol: MathSymbol = Field(..., description="The comparison operator.")
-    value: float = Field(..., description="The threshold value.")
+    # This template is passed to create_retriever_tool.
+    # This tells the function how to stringify the text
+    # of the retrieved Document objects along with their metadata (page_label)
+    custom_doc_prompt = PromptTemplate.from_template(
+        "--- DOCUMENT CHUNK ---\n"
+        "SOURCE PAGE: {page_label}\n"
+        "CONTENT: {page_content}\n"
+    )
 
+    # This is the actual StructuredTool
+    # A function that formats retriever output into a string
+    bisect_context_retriever = create_retriever_tool(
+        retriever=retriever,
+        name="bisect_context_retriever",
+        description="Search and return relevant portions of the bisect paper.",
+        document_prompt=custom_doc_prompt,
+        response_format="content"
+    )
 
-class ResampleTimeSeriesSchema(BaseModel):
-    freq: TimeFreq = Field(..., description="Temporal grouping frequency.")
-    method: StatsMethod = Field(...,
-                                description="Aggregation method (e.g., "
-                                            "'mean').")
+    # ++++++++++++++++++++ Dataset Metadata Retrieval ++++++++++++++++++++
 
+    @tool("dataset_metadata_retriever")
+    def dataset_metadata_retriever(
+            # Gets the entire src Dataset
+            dataset: Annotated[xr.Dataset, InjectedState]
+    ) -> str:
+        """This tool allows you to see the metadata of the entire dataset"""
+        ds = dataset
 
-class ReduceDimensionSchema(BaseModel):
-    dim: Dimension = Field(..., description="The dimension to collapse.")
-    method: StatsMethod = Field(..., description="The reduction method.")
-
-
-@tool(name_or_callable="spatial_temporal_select",
-      args_schema=SpatialTemporalSelectSchema)
-def spatial_temporal_select(
-        kwargs: Dict[Dimension, Union[float, str, List[Union[float, str]]]],
-        current_ds: Annotated[xr.Dataset, InjectedState]
-) -> xr.Dataset:
-    """Slices the dataset by space (x, y) or time coordinates.
-    Use for subsetting."""
-    ds = current_ds
-    slices = {}
-    points = {}
-
-    for k, v in kwargs.items():
-        if isinstance(v, list):
-            # Check coordinate direction for xarray slice
-            if ds[k].values[0] > ds[k].values[-1]:
-                slices[k] = slice(max(v), min(v))
+        # Capture spatial and temporal bounds
+        dims_info = {}
+        for dim in ds.dims:
+            d_min = ds[dim].min()
+            d_max = ds[dim].max()
+            if np.issubdtype(ds[dim].dtype, np.datetime64):
+                its_range = [
+                    str(np.datetime_as_string(d_min.values, unit='D')),
+                    str(np.datetime_as_string(d_max.values, unit='D'))]
             else:
-                slices[k] = slice(min(v), max(v))
-        else:
-            points[k] = v
+                its_range = [round(float(d_min), 2), round(float(d_max), 2)]
 
-    if slices:
-        ds = ds.sel(slices)
-    if points:
-        ds = ds.sel(points, method="nearest")
+            dims_info[dim] = {
+                "size": int(ds.sizes[dim]),  # Cast np.int64 to native int
+                "range": its_range
+            }
 
-    return ds
+        # Extract variable information (Skipping metadata scalars)
+        variables = {}
+        for var in ds.data_vars:
+            da = ds[var]
+            if da.ndim == 0 or "grid_mapping_name" in da.attrs:
+                continue
 
+            variables[var] = {
+                "dimensions": list(da.dims),
+                "units": str(da.attrs.get("units", "unknown")),
+                "long_name": str(da.attrs.get("long_name", var))
+            }
 
-@tool(name_or_callable="filter_by_value", args_schema=FilterByValueSchema)
-def filter_by_value(
-        target: Variable,
-        symbol: MathSymbol,
-        value: float,
-        current_ds: Annotated[xr.Dataset, InjectedState]
-) -> xr.Dataset:
-    """Applies a mask to data based on values (e.g., keep salinity > 30)."""
-    ds = current_ds
-    # This dictionary maps string symbols to functional logic.
-    ops = {
-        ">": operator.gt,
-        "<": operator.lt,
-        ">=": operator.ge,
-        "<=": operator.le,
-        "==": operator.eq,
-        "!=": operator.ne
-    }
+        # Global attributes
+        # Convert to a standard dict to remove any xarray-specific formatting
+        # We iterate and cast each value to ensure no raw NumPy types remain
+        attrs = {}
+        for k, v in ds.attrs.items():
+            if isinstance(v, (np.integer, np.int64, np.int32)):
+                attrs[k] = int(v)
+            elif isinstance(v, (np.floating, np.float64, np.float32)):
+                attrs[k] = float(v)
+            elif isinstance(v, np.ndarray):
+                attrs[k] = v.tolist()
+            else:
+                attrs[
+                    k] = v  # Native strings, bools, and None are already JSON safe
 
-    condition = ops[symbol](ds[target], value)
-    new_ds = ds.copy()
-    new_ds[target] = new_ds[target].where(condition)
-    return new_ds
+        # Construct the final summary
+        summary = {
+            "dataset_title": attrs.get("title", "Untitled Dataset"),
+            "spatial_temporal_bounds": dims_info,
+            "data_variables": variables,
+            "global_metadata": attrs
+        }
 
+        return f"Dataset Overview:\n{json.dumps(summary, indent=2)}"
 
-@tool(name_or_callable="resample_time_series",
-      args_schema=ResampleTimeSeriesSchema)
-def resample_time_series(
-        freq: TimeFreq,
-        method: StatsMethod,
-        current_ds: Annotated[xr.Dataset, InjectedState]
-) -> xr.Dataset:
-    """Aggregates the time dimension into larger bins (e.g., Monthly Mean)."""
-    ds = current_ds
-    resampler = ds.resample(time=freq)
-    return getattr(resampler, method)()
+    # ++++++++++++++++++++ See Selection Details ++++++++++++++++++++
 
+    @tool("inspect_selection")
+    def inspect_selection(
+            current_ds: Annotated[Optional[xr.Dataset], InjectedState]
+    ) -> str:
+        """
+        Statistical and geospatial summary of the active_selection.
+        """
+        ds = current_ds
+        if ds is None:
+            return "No active selection found."
 
-@tool(name_or_callable="reduce_dimension", args_schema=ReduceDimensionSchema)
-def reduce_dimension(
-        dim: Dimension,
-        method: StatsMethod,
-        current_ds: Annotated[xr.Dataset, InjectedState]
-) -> xr.Dataset:
-    """Collapses a dimension entirely. Use 'time' to create a map,
-    or 'x'/'y' for profiles."""
-    ds = current_ds
-    return getattr(ds, method)(dim=dim)
+        summary = {}
 
+        # Process variable statistics (skipping metadata variables)
+        for var in ds.data_vars:
+            da = ds[var]
 
-@tool(name_or_callable="reset_view")
-def reset_view(dataset: Annotated[xr.Dataset, InjectedState]):
-    """Resets the active view of the data back to the original dataset,
-    so you can make new queries."""
-    ds = dataset
-    return ds
+            # Skip coordinate reference system (CRS) or dummy variables
+            if da.ndim == 0 or "grid_mapping_name" in da.attrs:
+                continue
 
+            # If the slice is empty (0 pixels), don't even try math
+            if da.size == 0:
+                summary[var] = {"error": "Empty selection"}
+                continue
 
-# ++++++++++++++++++++ Geocoding ++++++++++++++++++++
+            # Basic Stats
+            v_mean = round(float(da.mean()), 2)
+            v_max = round(float(da.max()), 2)
+            v_min = round(float(da.min()), 2)
+            v_std = round(float(da.std()), 2)
+            v_null_percentage = round(float(da.isnull().mean() * 100), 1)
 
-# Pyproj transformer helper function
-# This transformer can only make sense of values that
-# lie within UTM Zone 17N (Florida area)
-_latlon_to_utm17 = Transformer.from_crs(
-    "EPSG:4326",  # WGS84 lat/lon
-    "EPSG:26917",  # NAD83 / UTM Zone 17N
-    always_xy=True
-)
+            # Find landmark (a.k.a. anomalous coordinates)
 
+            # These methods return a point datarray of the highest/lowest value
 
-# Wrapping transformer in a function
-def latlon_to_utm17(lat: float, lon: float) -> tuple[Any, Any]:
-    """
-    Convert latitude and longitude to UTM meters (EPSG:26917).
+            # For max
+            flat_max_idx = int(da.argmax())  # Find which index is the highest
+            indices = np.unravel_index(flat_max_idx,
+                                       da.shape)  # Find the grid this index lies in in the original DA
+            max_point_indexed = {dim: indices[i] for i, dim in enumerate(
+                da.dims)}  # Add labels to the grid index
+            max_info = da.isel(
+                max_point_indexed)  # Query the dataset for the point using the dictionary above
 
-    The return values follows the xy convention: easting followed by northing
+            # For min
+            flat_min_idx = int(da.argmin())
+            indices = np.unravel_index(flat_min_idx, da.shape)
+            min_point_indexed = {dim: indices[i] for i, dim in
+                                 enumerate(da.dims)}
+            min_info = da.isel(min_point_indexed)
 
-    Parameters
-    ----------
-    lat : float
-        Latitude in degrees
-    lon : float
-        Longitude in degrees
+            # These dictionary extract the value of the coordinates
+            max_coord = {
+                dim: (
+                    # Your suggested NumPy strategy
+                    str(np.datetime_as_string(max_info[dim].values, unit='D'))
+                    if np.issubdtype(max_info[dim].dtype, np.datetime64)
+                    else round(float(max_info[dim]), 2)
+                )
+                for dim in da.dims
+            }
 
-    Returns
-    -------
-    x : float
-        UTM Easting (meters)
-    y : float
-        UTM Northing (meters)
-    """
+            min_coord = {
+                dim: (
+                    # Your suggested NumPy strategy
+                    str(np.datetime_as_string(min_info[dim].values, unit='D'))
+                    if np.issubdtype(min_info[dim].dtype, np.datetime64)
+                    else round(float(min_info[dim]), 2)
+                )
+                for dim in da.dims
+            }
 
-    x, y = _latlon_to_utm17.transform(lon, lat, errcheck=True)
-    return x, y
+            summary[var] = {
+                "mean": v_mean,
+                "max": v_max,
+                "max_coord": max_coord,
+                "min": v_min,
+                "min_coord": min_coord,
+                "std": v_std,
+                "units": da.attrs.get("units", "unknown"),
+                "long_name": da.attrs.get("long_name", var),
+                "null_percentage": v_null_percentage
+            }
 
+        # Process coordinate information
+        dims_info = {}
+        for dim in ds.dims:
+            d_min = ds[dim].min()
+            d_max = ds[dim].max()
 
-# Input schema
-class GeocodingInput(BaseModel):
-    """"Input schema for geocoding tool"""
-    location_name: str = Field(
-        ...,
-        description="The name of the location to look up (e.g., 'Biscayne Bay')"
+            # Handles formatting of time-based coordinates
+            if dim == 'time' or np.issubdtype(ds[dim].dtype, np.datetime64):
+                # Formats to human-readable strings like '2026-01-01'
+                its_range = [
+                    str(np.datetime_as_string(d_min.values, unit='D')),
+                    str(np.datetime_as_string(d_max.values, unit='D'))
+                ]
+            else:
+                # Standard numeric coordinates (e.g. x, y) can be floats
+                its_range = [round(float(d_min), 2), round(float(d_max), 2)]
+
+            dims_info[dim] = {
+                "range": its_range
+            }
+
+        return f"Selection Profile: {{'variable_stats': {summary}, 'dimensions': {dims_info}}}"
+
+    # ++++++++++++++++++++ Changing View ++++++++++++++++++++
+
+    # The schemas below control how function arguments are allowed to be
+    # structured for these GIS operations.
+    # These schemas are a must for the agent not to get lost when trying to
+    # execute a complex GIS manipulations.
+
+    # We also dynamically define the type hints for Variable and Dimension to
+    # match the metadata of the source dataset.
+    # This prevents the LLM from hallucinating variable names like 'temp' or
+    # 'depth'
+
+    # This is a list of dataset variables excluding metadata variables like
+    # coordinate reference systems
+    vars_list = [
+        var for var in ds.data_vars if var not in ["crs", "spatial_ref", "grid_mapping"]
+    ]
+    var_names = tuple(vars_list)
+    dim_names = tuple(ds.coords)
+    # Literal only understands tuples if you feed them through the .__getitem__
+    # Method
+    Variable = Literal.__getitem__(var_names)
+    Dimension = Literal.__getitem__(dim_names)
+    MathSymbol = Literal[">", "<", ">=", "<=", "==", "!="]
+    StatsMethod = Literal["mean", "max", "min", "std", "median"]
+    TimeFreq = Literal[
+        "1D", "1W", "1MS", "1YS"]  # Daily, Weekly, Month Start, Year Start
+
+    class SpatialTemporalSelectSchema(BaseModel):
+        kwargs: Dict[
+            Dimension, Union[float, str, List[Union[float, str]]]] = Field(
+            ...,
+            description="Coordinate constraints. Use [min, max] for a range "
+                        "or a single value. Takes spatial (x, y) and "
+                        "calendar dates for time.",
+            example={"x": [580000, 585000], "time": "2026-01-01"}
+        )
+
+    class FilterByValueSchema(BaseModel):
+        target: Variable = Field(...,
+                                 description="The variable to filter (e.g., "
+                                             "'salinity').")
+        symbol: MathSymbol = Field(..., description="The comparison operator.")
+        value: float = Field(..., description="The threshold value.")
+
+    class ResampleTimeSeriesSchema(BaseModel):
+        freq: TimeFreq = Field(..., description="Temporal grouping frequency.")
+        method: StatsMethod = Field(...,
+                                    description="Aggregation method (e.g., "
+                                                "'mean').")
+
+    class ReduceDimensionSchema(BaseModel):
+        dim: Dimension = Field(..., description="The dimension to collapse.")
+        method: StatsMethod = Field(..., description="The reduction method.")
+
+    @tool(name_or_callable="spatial_temporal_select",
+          args_schema=SpatialTemporalSelectSchema)
+    def spatial_temporal_select(
+            kwargs: Dict[
+                Dimension, Union[float, str, List[Union[float, str]]]],
+            current_ds: Annotated[xr.Dataset, InjectedState]
+    ) -> xr.Dataset:
+        """Slices the dataset by space (x, y) or time coordinates.
+        Use for subsetting."""
+        ds = current_ds
+        slices = {}
+        points = {}
+
+        for k, v in kwargs.items():
+            if isinstance(v, list):
+                # Check coordinate direction for xarray slice
+                if ds[k].values[0] > ds[k].values[-1]:
+                    slices[k] = slice(max(v), min(v))
+                else:
+                    slices[k] = slice(min(v), max(v))
+            else:
+                points[k] = v
+
+        if slices:
+            ds = ds.sel(slices)
+        if points:
+            ds = ds.sel(points, method="nearest")
+
+        return ds
+
+    @tool(name_or_callable="filter_by_value", args_schema=FilterByValueSchema)
+    def filter_by_value(
+            target: Variable,
+            symbol: MathSymbol,
+            value: float,
+            current_ds: Annotated[xr.Dataset, InjectedState]
+    ) -> xr.Dataset:
+        """
+        Applies a mask to data based on values (e.g., keep salinity > 30).
+        """
+        ds = current_ds
+        # This dictionary maps string symbols to functional logic.
+        ops = {
+            ">": operator.gt,
+            "<": operator.lt,
+            ">=": operator.ge,
+            "<=": operator.le,
+            "==": operator.eq,
+            "!=": operator.ne
+        }
+
+        condition = ops[symbol](ds[target], value)
+        new_ds = ds.copy()
+        new_ds[target] = new_ds[target].where(condition)
+        return new_ds
+
+    @tool(name_or_callable="resample_time_series",
+          args_schema=ResampleTimeSeriesSchema)
+    def resample_time_series(
+            freq: TimeFreq,
+            method: StatsMethod,
+            current_ds: Annotated[xr.Dataset, InjectedState]
+    ) -> xr.Dataset:
+        """
+        Aggregates the time dimension into larger bins (e.g., Monthly Mean).
+        """
+        ds = current_ds
+        resampler = ds.resample(time=freq)
+        return getattr(resampler, method)()
+
+    @tool(name_or_callable="reduce_dimension",
+          args_schema=ReduceDimensionSchema)
+    def reduce_dimension(
+            dim: Dimension,
+            method: StatsMethod,
+            current_ds: Annotated[xr.Dataset, InjectedState]
+    ) -> xr.Dataset:
+        """
+        Collapses a dimension entirely. Use 'time' to create a map,
+        or 'x'/'y' for profiles.
+        """
+        ds = current_ds
+        return getattr(ds, method)(dim=dim)
+
+    @tool(name_or_callable="reset_view")
+    def reset_view(dataset: Annotated[xr.Dataset, InjectedState]):
+        """
+        Resets the active view of the data back to the original dataset,
+        so you can make new queries.
+        """
+        ds = dataset
+        return ds
+
+    # ++++++++++++++++++++ Geocoding ++++++++++++++++++++
+
+    # Pyproj transformer helper function
+    # This transformer can only make sense of values that
+    # lie within UTM Zone 17N (Florida area)
+    _latlon_to_utm17 = Transformer.from_crs(
+        "EPSG:4326",  # WGS84 lat/lon
+        "EPSG:26917",  # NAD83 / UTM Zone 17N
+        always_xy=True
     )
 
+    # Wrapping transformer in a function
+    def latlon_to_utm17(lat: float, lon: float) -> tuple[Any, Any]:
+        """
+        Convert latitude and longitude to UTM meters (EPSG:26917).
 
-# Tool logic
+        The return values follows the xy convention: easting followed by northing
 
-# --- BISECT model bounds ---
-left, right = 461000.0, 590500.0
-top, bottom = 2872000.0, 2779000.0
+        Parameters
+        ----------
+        lat : float
+            Latitude in degrees
+        lon : float
+            Longitude in degrees
 
+        Returns
+        -------
+        x : float
+            UTM Easting (meters)
+        y : float
+            UTM Northing (meters)
+        """
 
-@tool("geocoding_tool", args_schema=GeocodingInput)
-def geocoding_tool(location_name: str) -> dict[str, Any]:
-    """
-    Useful for finding UTM Zone 17N coordinates
-    when you only have a place name.
-    """
+        x, y = _latlon_to_utm17.transform(lon, lat, errcheck=True)
+        return x, y
 
-    geolocator = Nominatim(user_agent="ursa_hydrology")
-    location = geolocator.geocode(location_name)
+    # Input schema
+    class GeocodingInput(BaseModel):
+        """"Input schema for geocoding tool"""
+        location_name: str = Field(
+            ...,
+            description="The name of the location to look up "
+                        "(e.g., 'Biscayne Bay')"
+        )
 
-    if not location:
-        return {"error": f"Could not find {location_name}"}
+    # Tool logic
 
-    easting, northing = latlon_to_utm17(location.latitude, location.longitude)
+    # --- BISECT model bounds ---
+    left, right = 461000.0, 590500.0
+    top, bottom = 2872000.0, 2779000.0
 
-    # Check If coordinates are in the proper range
-    # (A.K.A around South Florida )
-    if left <= easting <= right and bottom <= northing <= top:
-        return {
-            "easting": round(easting, 2),
-            "northing": round(northing, 2),
-            "found_address": location.address
-        }
-    else:
-        return {
-            "alert": f"Location '{location.address}' is outside the valid "
-                     f"UTM 17N zone. Coordinate projection may be inaccurate.",
-            "easting": easting,
-            "northing": northing
-        }
+    @tool("geocoding_tool", args_schema=GeocodingInput)
+    def geocoding_tool(location_name: str) -> dict[str, Any]:
+        """
+        Useful for finding UTM Zone 17N coordinates
+        when you only have a place name.
+        """
 
+        geolocator = Nominatim(user_agent="ursa_hydrology")
+        location = geolocator.geocode(location_name)
 
-# ++++++++++++++++++++ Custom Tool Node  ++++++++++++++++++++
-def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
-    """
-    Executes tools that return xr.Datasets and updates the graph state.
-    """
-    tools_by_name = {
-        t.name: t for t in [
+        if not location:
+            return {"error": f"Could not find {location_name}"}
+
+        easting, northing = latlon_to_utm17(location.latitude,
+                                            location.longitude)
+
+        # Check If coordinates are in the proper range
+        # (A.K.A around South Florida )
+        if left <= easting <= right and bottom <= northing <= top:
+            return {
+                "easting": round(easting, 2),
+                "northing": round(northing, 2),
+                "found_address": location.address
+            }
+        else:
+            return {
+                "alert": f"Location '{location.address}' is outside the valid "
+                         f"UTM 17N zone. Coordinate projection may be inaccurate.",
+                "easting": easting,
+                "northing": northing
+            }
+
+    # Returns a list of the dynamically generated tools
+    return [
             bisect_context_retriever,
             dataset_metadata_retriever,
             spatial_temporal_select,
@@ -479,6 +496,15 @@ def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
             inspect_selection,
             geocoding_tool
         ]
+
+
+# ++++++++++++++++++++ Custom Tool Node  ++++++++++++++++++++
+def ursa_tool_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Executes tools that return xr.Datasets and updates the graph state.
+    """
+    tools_by_name = {
+        t.name: t for t in state.tools
     }
 
     last_message = state.messages[-1]

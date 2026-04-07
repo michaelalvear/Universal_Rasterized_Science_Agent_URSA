@@ -28,7 +28,9 @@ import numpy as np
 
 # Image generation for georeferenced overlay (replaces leaflet-heat KDE approach)
 import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend; must be called before importing pyplot
+
+matplotlib.use(
+    "Agg")  # Non-interactive backend; must be called before importing pyplot
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from io import BytesIO
@@ -36,7 +38,9 @@ import base64
 
 # Coordinate conversion
 from pyproj import Transformer
-_utm_to_latlon = Transformer.from_crs("EPSG:26917", "EPSG:4326", always_xy=True)
+
+_utm_to_latlon = Transformer.from_crs("EPSG:26917", "EPSG:4326",
+                                      always_xy=True)
 
 # Types
 from typing import Literal, List
@@ -68,28 +72,14 @@ def end_session_router(
         return "request created"
 
 
-tools = [
-    bisect_context_retriever,
-    dataset_metadata_retriever,
-    spatial_temporal_select,
-    filter_by_value,
-    resample_time_series,
-    reduce_dimension,
-    inspect_selection,
-    reset_view,
-    geocoding_tool
-]
-
-# Initialize Gemini API + bind tools
-llm = ChatGoogleGenerativeAI(model="gemini-3.1-pro-preview", temperature=0,
-                             streaming=True).bind_tools(tools)
-
-
 # Main llm invocation
 def llm_call(state: AgentState) -> dict[str, List[AIMessage]]:
     """
     LLM decides whether to call a tool or not.
     """
+    # Initialize Gemini Client + bind tools
+    llm = ChatGoogleGenerativeAI(model="gemini-3.1-pro-preview", temperature=0,
+                                 streaming=True).bind_tools(state.tools)
 
     llm_response = llm.invoke(state.messages)
     return {"messages": [llm_response]}
@@ -193,9 +183,9 @@ to non technical South Florida stakeholders (city council-people, engineers,
 developers, etc.).
 
 You have been provided tools to fetch context from the paper itself as well
-as a small subset of the results of the model in the form of raster GIS data
-tracking surface salinity measurements of a baseline emissions scenario in 
-South Florida.
+as a small subset of the results of the model in the form of one of the 
+spatiotemporal raster GIS data tracking hydrology variable projections under an 
+SSP scenario in South Florida, use your tools to figure out which one.
 
 Your can get context on the paper through the tools provided to you.
 
@@ -212,16 +202,16 @@ Follow argument schemas *EXACTLY*.
 *ALWAYS MANUALLY CHECK METADATA*
 
 You are a data interface. You are *FORBIDDEN* from providing numerical data (
-salinity, means, ranges) unless you have successfully received a ToolMessage 
+values, means, ranges) unless you have successfully received a ToolMessage 
 containing that specific data in the current conversation turn. 
 
-Nan values indicate a near zero salinity measurement typically indicating the
-presence of a landmass.
+Nan values indicate a near zero projection typically indicating the presence of
+a landmass.
 
-Units have been converted from the original PSU units of the model into grams 
-per liter. 
+Units have been converted from the original PSU units of the model for salinity
+ variables into grams per liter. 
 
-*REMEMBER: THE UNITS ARE GRAMS PER LITER*
+*REMEMBER: THE UNITS FOR SALINITY ARE GRAMS PER LITER*
 
 The updated data after each operation is preserved in your state, so if you 
 need to perform a multistep operation you can.
@@ -258,7 +248,8 @@ if __name__ == "__main__":
 
     # Initialize state
     inputs = {"messages": [SystemMessage(content=essential_context)],
-              "dataset": DS
+              "dataset": DS,
+              "tools": generate_tools(DS)
               }
 
     # Initialize token counter
@@ -289,6 +280,7 @@ if __name__ == "__main__":
     print(token_string)
     print(bars)
 
+
 # ++++++++++ Flask Interface ++++++++++
 
 def run_agent(user_message: str, history: list = None) -> dict:
@@ -317,7 +309,8 @@ def run_agent(user_message: str, history: list = None) -> dict:
             SystemMessage(content=essential_context),
             HumanMessage(content=full_message)
         ],
-        "dataset": DS
+        "dataset": DS,
+        "tools": generate_tools(DS)
     }
 
     result = app.invoke(initial_state)
@@ -330,8 +323,9 @@ def run_agent(user_message: str, history: list = None) -> dict:
             for block in content
         )
 
-    # Build tool log: extract every tool call and its result from the message chain.
-    # This lets the frontend show users exactly what the agent did.
+    # Build tool log: extract every tool call and its result from the
+    # message chain. This lets the frontend show users exactly what the
+    # agent did.
     tool_log = []
     for msg in result["messages"]:
         if hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -345,7 +339,8 @@ def run_agent(user_message: str, history: list = None) -> dict:
             tool_content = msg.content
             if isinstance(tool_content, list):
                 tool_content = " ".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    block.get("text", "") if isinstance(block, dict) else str(
+                        block)
                     for block in tool_content
                 )
             tool_log.append({
@@ -412,8 +407,8 @@ def run_agent(user_message: str, history: list = None) -> dict:
         # vmin=0 keeps fresh water anchored at the blue end of the scale.
         cmap = plt.get_cmap("turbo")
         norm = mcolors.Normalize(vmin=0, vmax=max_sal)
-        rgba = cmap(norm(grid))           # float RGBA array (n_y, n_x, 4)
-        rgba[np.isnan(grid), 3] = 0.0     # transparent for NaN (land/ocean mask)
+        rgba = cmap(norm(grid))  # float RGBA array (n_y, n_x, 4)
+        rgba[np.isnan(grid), 3] = 0.0  # transparent for NaN (land/ocean mask)
 
         buf = BytesIO()
         plt.imsave(buf, rgba, format="png")
@@ -423,11 +418,14 @@ def run_agent(user_message: str, history: list = None) -> dict:
         # Compute lat/lon bounds for Leaflet imageOverlay positioning.
         x_vals = selection["x"].values
         y_vals = selection["y"].values
-        lon_sw, lat_sw = _utm_to_latlon.transform(float(x_vals.min()), float(y_vals.min()))
-        lon_ne, lat_ne = _utm_to_latlon.transform(float(x_vals.max()), float(y_vals.max()))
+        lon_sw, lat_sw = _utm_to_latlon.transform(float(x_vals.min()),
+                                                  float(y_vals.min()))
+        lon_ne, lat_ne = _utm_to_latlon.transform(float(x_vals.max()),
+                                                  float(y_vals.max()))
 
         # Cell size in meters — used by the frontend to compute zoom-adaptive blur.
-        cell_size_m = abs(float(x_vals[1] - x_vals[0])) if len(x_vals) > 1 else 250.0
+        cell_size_m = abs(float(x_vals[1] - x_vals[0])) if len(
+            x_vals) > 1 else 250.0
 
         charts["heatmap"] = {
             "image_b64": img_b64,

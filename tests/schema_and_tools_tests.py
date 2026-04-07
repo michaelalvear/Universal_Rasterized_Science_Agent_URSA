@@ -43,7 +43,7 @@ spatial_temporal_select_call = {
         "kwargs": {
             "x": [572125, 592125],
             "y": [2810601, 2830601],
-            "time": ["2016-01-01", "2016-01-31"]
+            "time": ["2096-01-01", "2096-01-31"]
         }
     },
     "id": "call_3",
@@ -139,10 +139,12 @@ app = graph.compile()
 # ++++++++++ Check Test Results ++++++++++
 load_dotenv()
 DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"))
+my_tools = generate_tools(DS)
 
 initial_state = {
     "messages": [tool_node_message],
-    "dataset": DS
+    "dataset": DS,
+    "tools": my_tools
 }
 
 final_state = app.invoke(initial_state)

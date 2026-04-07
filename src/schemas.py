@@ -2,7 +2,7 @@
 This file holds pydantic models related to the Langgraph Agent's State
 """
 from pydantic import BaseModel, Field, ConfigDict, model_validator
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Optional, Any
 from xarray import Dataset
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -34,3 +34,6 @@ class AgentState(BaseModel):
             # If we didn't provide a slice, start with the whole thing
             self.active_selection = self.dataset
         return self
+
+    # The list of tools corresponding to the specific dataset
+    tools: List[Any] = Field(...)
