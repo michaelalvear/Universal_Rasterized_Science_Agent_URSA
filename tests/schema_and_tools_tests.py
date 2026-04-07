@@ -97,17 +97,27 @@ geocoding_tool_call = {
     "type": "tool_call"
 }
 
+reverse_geocoding_tool_call = {
+    "name": "reverse_geocoding_tool",
+    "args": {
+        "easting": 574000.0,
+        "northing": 2815000.0
+    },
+    "id": "call_9",
+    "type": "tool_call"
+}
+
 reset_view_call = {
     "name": "reset_view",
     "args": {},
-    "id": "call_9",
+    "id": "call_10",
     "type": "tool_call"
 }
 
 inspect_selection_call_2 = {
     "name": "inspect_selection",
     "args": {},
-    "id": "call_10",
+    "id": "call_11",
     "type": "tool_call"
 }
 
@@ -121,6 +131,7 @@ tool_node_message = AIMessage(
                 reduce_dimension_call,
                 inspect_selection_call_1,
                 geocoding_tool_call,
+                reverse_geocoding_tool_call,
                 reset_view_call,
                 inspect_selection_call_2
                 ]

@@ -484,6 +484,71 @@ def generate_tools(ds: xr.Dataset) -> List[Any]:
                 "northing": northing
             }
 
+    # ++++++++++++++++++++ Reverse Geocoding ++++++++++++++++++++
+    # Pyproj transformer helper function for reverse projection
+    # Converts UTM Zone 17N (NAD83) back to WGS84 lat/lon
+    _utm17_to_latlon = Transformer.from_crs(
+        "EPSG:26917",  # NAD83 / UTM Zone 17N
+        "EPSG:4326",  # WGS84 lat/lon
+        always_xy=True
+    )
+
+    def utm17_to_latlon(easting: float, northing: float) -> tuple[
+        float, float]:
+        """
+        Convert UTM meters (EPSG:26917) back to latitude and longitude.
+        """
+        lon, lat = _utm17_to_latlon.transform(easting, northing, errcheck=True)
+        return lat, lon
+
+    # Input schema
+    class ReverseGeocodingInput(BaseModel):
+        """Input schema for reverse geocoding tool"""
+        easting: float = Field(..., description="UTM Easting in meters")
+        northing: float = Field(..., description="UTM Northing in meters")
+
+    # Tool logic
+    @tool("reverse_geocoding_tool", args_schema=ReverseGeocodingInput)
+    def reverse_geocoding_tool(easting: float, northing: float) -> dict[
+        str, Any]:
+        """
+        Useful for finding a human-readable address or location name
+        when you have UTM Zone 17N coordinates.
+        """
+
+        # BISECT Boundary check
+        left, right = 461000.0, 590500.0
+        top, bottom = 2872000.0, 2779000.0
+
+        outside_bounds = not (
+                    left <= easting <= right and bottom <= northing <= top)
+
+        # Perform transformation
+        try:
+            lat, lon = utm17_to_latlon(easting, northing)
+        except Exception as e:
+            return {"error": f"Transformation failed: {str(e)}"}
+
+        # Initialize geolocator
+        geolocator = Nominatim(user_agent="ursa_hydrology_reverse")
+
+        # Reverse lookup
+        try:
+            location = geolocator.reverse((lat, lon), language="en")
+            if not location:
+                return {"error": "No address found for these coordinates."}
+
+            result = {"address": location.address}
+
+            if outside_bounds:
+                result[
+                    "alert"] = "Coordinates are outside the primary South Florida study area."
+
+            return result
+
+        except Exception as e:
+            return {"error": f"Geocoding service error: {str(e)}"}
+
     # Returns a list of the dynamically generated tools
     return [
             bisect_context_retriever,
@@ -494,7 +559,8 @@ def generate_tools(ds: xr.Dataset) -> List[Any]:
             reduce_dimension,
             reset_view,
             inspect_selection,
-            geocoding_tool
+            geocoding_tool,
+            reverse_geocoding_tool
         ]
 
 

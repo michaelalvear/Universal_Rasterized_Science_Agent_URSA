@@ -225,6 +225,9 @@ operations use the reset_view tool.
 If the user asks a question that requires knowledge of coordinates use the
 geocoding tool.
 
+If you need to convert coordinates to a place name use the reverse geocoding 
+tool.
+
 Use plain text only in your responses. Do not use markdown formatting such as
 **bold**, *italic*, or # headers.
 
