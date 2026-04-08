@@ -26,7 +26,15 @@ Setup:
 3. Install dependencies:
    pip install -r requirements.txt
 
-4. Create a .env file in the project root with the following variables:
+4. Obtain the required data files (not included in this repository):
+   - BISECT NetCDF data file (.nc) — the raster GIS data the agent analyzes
+   - BISECT Paper PDF — the source document for the RAG knowledge base
+   - ChromaDB vector database — generated from the PDF using utilities/chromadb_utils.py
+
+   To build the vector database from the PDF, run:
+      python utilities/chromadb_utils.py
+
+5. Create a .env file in the project root with the following variables:
    GOOGLE_API_KEY=your_google_api_key
    GOOGLE_MAPS_API_KEY=your_google_maps_api_key
    NETCDF_DATA_PATH=/path/to/your/netcdf_file.nc
