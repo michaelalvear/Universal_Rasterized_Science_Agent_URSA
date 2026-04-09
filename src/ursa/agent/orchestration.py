@@ -3,34 +3,29 @@ This is the main agent orchestration file, run this to talk to the agent in the
 console
 """
 
-# For paths and environment variables
-import os
-import sys
+# Environment variables
 from dotenv import load_dotenv
+import os
 
 # URSA modules
-from tools import *
-from schemas import *
+from ursa.agent.tools import generate_tools, ursa_tool_node
+from ursa.agent.schemas import AgentState
 
-# Add utilities to search path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),
-                                             "../utilities")))
-from message_formatter import format_msg
+# Format console stream
+from ursa.agent.message_formatter import format_msg
 
 # Langgraph/Langchain
 from langgraph.graph import StateGraph, START, END
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # Xarray
 import xarray as xr
 import numpy as np
 
-# Image generation for georeferenced overlay (replaces leaflet-heat KDE approach)
-import matplotlib
-
-matplotlib.use(
-    "Agg")  # Non-interactive backend; must be called before importing pyplot
+# Image generation for georeferenced overlay (replaces leaflet-heat KDE
+# approach)
+from ursa import config
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from io import BytesIO
@@ -38,9 +33,6 @@ import base64
 
 # Coordinate conversion
 from pyproj import Transformer
-
-_utm_to_latlon = Transformer.from_crs("EPSG:26917", "EPSG:4326",
-                                      always_xy=True)
 
 # Types
 from typing import Literal, List
@@ -419,6 +411,9 @@ def run_agent(user_message: str, history: list = None) -> dict:
         img_b64 = base64.b64encode(buf.read()).decode("utf-8")
 
         # Compute lat/lon bounds for Leaflet imageOverlay positioning.
+        _utm_to_latlon = Transformer.from_crs("EPSG:26917", "EPSG:4326",
+                                              always_xy=True)
+
         x_vals = selection["x"].values
         y_vals = selection["y"].values
         lon_sw, lat_sw = _utm_to_latlon.transform(float(x_vals.min()),

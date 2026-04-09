@@ -2,20 +2,14 @@
 Flask server for URSA.
 Receives a user query, runs it through available tools, returns structured JSON.
 """
-
-import os
-import sys
 import traceback
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+from pyproj import Transformer
+from ursa.agent.orchestration import DS, run_agent
 
 load_dotenv()
-
-# tools.py imports from schemas.py using a relative name, so src/ must be on the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-
-from orchestration import run_agent
 
 app = Flask(__name__)
 CORS(app)
@@ -52,7 +46,10 @@ def query():
 
 @app.route("/dataset/info", methods=["GET"])
 def dataset_info():
-    from orchestration import DS, _utm_to_latlon
+
+    _utm_to_latlon = Transformer.from_crs("EPSG:26917", "EPSG:4326",
+                                          always_xy=True)
+
     x_min = float(DS["x"].min())
     x_max = float(DS["x"].max())
     y_min = float(DS["y"].min())

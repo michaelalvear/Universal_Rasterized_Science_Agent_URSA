@@ -3,21 +3,18 @@ Testing tools + state schema integration
 """
 # For paths and environment variables
 import os
-import sys
 from dotenv import load_dotenv
-
-# Modules under test
-sys.path.append(os.path.abspath("../src"))  # Add "src" dir to the search path
-from tools import *
-from schemas import *
 
 # Langgraph/Langchain
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import AIMessage
-from langgraph.prebuilt import ToolNode
 
 # Xarray
 import xarray as xr
+
+# Modules under test
+from ursa.agent.tools import generate_tools, ursa_tool_node
+from ursa.agent.schemas import AgentState
 
 
 # ++++++++++ Initializing Tool Calls ++++++++++

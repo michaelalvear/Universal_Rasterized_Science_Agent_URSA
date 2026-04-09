@@ -19,12 +19,13 @@ from geopy.geocoders import Nominatim
 from pyproj import Transformer
 
 # Type hinting/validation
-from typing import Literal, Union, Dict, Any
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from langchain_core.messages import AIMessage, ToolMessage
 import xarray as xr
 import numpy as np
 from inspect import signature
-from schemas import *
+from pydantic import BaseModel, Field
+from ursa.agent.schemas import AgentState
 
 # String formatting
 import json

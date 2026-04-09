@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ursa"
+version = "0.1.0"
+description = "A natural language interface for netcdf climate data"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    # Core AI and Logic
+    "langgraph",
+    "langchain",
+    "langchain-core",
+    "pydantic",
+
+    # RAG
+    "chromadb",
+    "langchain-chroma",
+    "langchain-community",
+    "pypdf",
+    "langchain-text-splitters",
+
+    # Data Science and NetCDF
+    "xarray",
+    "netcdf4",
+    "dask",
+    "pandas",
+    "numpy",
+    "matplotlib",
+
+    # Mapping and Geospatial
+    "geopy",
+    "pyproj",
+
+    # Google Gemini Integration
+    "langchain-google-genai",
+
+    # Flask server
+    "flask",
+    "flask-cors",
+
+    # Environment Variables Access
+    "python-dotenv"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]  # Look in the 'src' folder for code
