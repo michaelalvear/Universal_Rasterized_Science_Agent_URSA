@@ -15,6 +15,14 @@ U.A. Whitaker College of Engineering, Florida Gulf Coast University
 The Water School, Florida Gulf Coast University
 DENDRITIC A Human-Centered Artificial Intelligence and Data Science Institute, Florida Gulf Coast University
 
+Project Structure:
+   frontend/           - Web UI (index.html)
+   rag/                - ChromaDB utilities (chromadb_utils.py)
+   src/ursa/           - Main package
+     agent/            - Orchestration, tools, schemas, message formatter
+     app.py            - Flask server entry point
+     config.py         - Configuration
+
 Setup:
 1. Create a virtual environment:
    python -m venv venv
@@ -23,16 +31,16 @@ Setup:
    - macOS/Linux: source venv/bin/activate
    - Windows:     venv\Scripts\activate
 
-3. Install dependencies:
-   pip install -r requirements.txt
+3. Install the package and dependencies:
+   pip install -e .
 
 4. Obtain the required data files (not included in this repository):
    - BISECT NetCDF data file (.nc) — the raster GIS data the agent analyzes
    - BISECT Paper PDF — the source document for the RAG knowledge base
-   - ChromaDB vector database — generated from the PDF using utilities/chromadb_utils.py
+   - ChromaDB vector database — generated from the PDF using rag/chromadb_utils.py
 
    To build the vector database from the PDF, run:
-      python utilities/chromadb_utils.py
+      python rag/chromadb_utils.py
 
 5. Create a .env file in the project root with the following variables:
    GOOGLE_API_KEY=your_google_api_key
@@ -42,6 +50,6 @@ Setup:
    PDF_PATH=/path/to/your/bisect_paper.pdf
 
 Running the App:
-   python app.py
+   python -m ursa.app
 
    The server will start on http://localhost:5001
