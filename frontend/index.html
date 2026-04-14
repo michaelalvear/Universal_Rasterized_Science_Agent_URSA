@@ -11,23 +11,23 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:          #0d0d14;
-      --bg2:         #12121e;
-      --bg3:         #1a1a2e;
-      --bg4:         #21213a;
-      --accent:      #818cf8;
-      --accent-dim:  #6366f1;
-      --border:      rgba(255,255,255,0.07);
-      --border-med:  rgba(255,255,255,0.12);
-      --text:        #e2e8f0;
-      --text2:       #94a3b8;
-      --text3:       #4a5568;
-      --user-bg:     #1e3558;
-      --radius:      12px;
+      --bg:          #ffffff;
+      --bg2:         #f8f9fa;
+      --bg3:         #f1f3f5;
+      --bg4:         #e9ecef;
+      --accent:      #1a56a0;
+      --accent-dim:  #1e4d8c;
+      --border:      rgba(0,0,0,0.10);
+      --border-med:  rgba(0,0,0,0.16);
+      --text:        #1a1a1a;
+      --text2:       #4a4a4a;
+      --text3:       #888888;
+      --user-bg:     #dce8f7;
+      --radius:      8px;
       --sidebar-w:   290px;
     }
 
-    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+    html, body { height: 100%; font-family: 'Georgia', 'Times New Roman', serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
 
     /* ── APP SHELL ─────────────────────────────────── */
     #app { display: flex; height: 100vh; overflow: hidden; }
@@ -54,17 +54,19 @@
     }
 
     #brand-name {
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: 0.12em;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       color: var(--accent);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
     #brand-sub {
       font-size: 10px;
       color: var(--text3);
-      letter-spacing: 0.06em;
+      letter-spacing: 0.04em;
       margin-top: 2px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
     .sidebar-section { padding: 14px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
@@ -103,7 +105,7 @@
     #selection-info {
       background: var(--bg3);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 4px;
       padding: 10px 12px;
       font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
       font-size: 11px;
@@ -144,20 +146,22 @@
     }
 
     #welcome-title {
-      font-size: 52px;
-      font-weight: 900;
-      letter-spacing: 0.12em;
+      font-size: 42px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       color: var(--accent);
       line-height: 1;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
-    #welcome-sub { font-size: 15px; color: var(--text2); font-weight: 500; margin-top: 4px; }
+    #welcome-sub { font-size: 14px; color: var(--text2); font-weight: 400; margin-top: 4px; font-style: italic; }
 
     #welcome-hint {
       font-size: 13px;
-      max-width: 380px;
-      line-height: 1.65;
+      max-width: 400px;
+      line-height: 1.7;
       margin-top: 8px;
+      color: var(--text2);
     }
 
     #welcome-chips {
@@ -171,16 +175,17 @@
 
     .welcome-chip {
       background: var(--bg3);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 6px 14px;
+      border: 1px solid var(--border-med);
+      border-radius: 4px;
+      padding: 5px 13px;
       font-size: 12px;
       color: var(--text2);
       cursor: pointer;
       transition: all 0.15s;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
-    .welcome-chip:hover { border-color: var(--accent); color: var(--accent); background: rgba(129,140,248,0.07); }
+    .welcome-chip:hover { border-color: var(--accent); color: var(--accent); background: rgba(26,86,160,0.06); }
 
     /* ── MESSAGES ──────────────────────────────────── */
     .message-row {
@@ -201,27 +206,29 @@
       max-width: 72%;
       white-space: pre-wrap;
       word-break: break-word;
-      color: #c7d9f5;
+      color: #1a3a5c;
       font-size: 14px;
       line-height: 1.65;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+      border: 1px solid rgba(26,86,160,0.15);
     }
 
     .assistant-card { width: 100%; max-width: 100%; }
 
     .assistant-name {
-      font-size: 10px;
+      font-size: 9px;
       text-transform: uppercase;
-      letter-spacing: 0.13em;
-      font-weight: 800;
+      letter-spacing: 0.14em;
+      font-weight: 700;
       color: var(--accent);
       margin-bottom: 10px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
     .assistant-text {
       white-space: pre-wrap;
       word-break: break-word;
-      line-height: 1.75;
+      line-height: 1.8;
       color: var(--text);
       font-size: 14px;
     }
@@ -232,18 +239,18 @@
     .chart-btn {
       background: var(--bg3);
       border: 1px solid var(--border-med);
-      border-radius: 8px;
+      border-radius: 4px;
       color: var(--text2);
-      padding: 5px 14px;
+      padding: 4px 13px;
       font-size: 12px;
-      font-family: inherit;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       cursor: pointer;
       transition: all 0.15s;
       font-weight: 500;
     }
 
-    .chart-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(129,140,248,0.07); }
-    .chart-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(129,140,248,0.12); }
+    .chart-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(26,86,160,0.06); }
+    .chart-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(26,86,160,0.09); }
 
     /* ── CHART AREA ────────────────────────────────── */
     .chart-area { display: none; margin-top: 14px; }
@@ -304,7 +311,7 @@
       margin-top: 8px;
       background: var(--bg2);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 4px;
       padding: 12px 14px;
       font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
       font-size: 11px;
@@ -318,18 +325,19 @@
     .tool-log-content::-webkit-scrollbar { width: 3px; }
     .tool-log-content::-webkit-scrollbar-thumb { background: var(--border); }
 
-    .log-call  { color: #93c5fd; }
-    .log-result { color: #86efac; }
-    .log-args  { color: var(--text3); }
+    .log-call   { color: #1a56a0; font-weight: 600; }
+    .log-result { color: #1a7a3c; }
+    .log-args   { color: var(--text3); }
 
     /* ── THINKING DOTS ─────────────────────────────── */
     .thinking { display: flex; gap: 5px; align-items: center; padding: 4px 0; }
 
     .thinking span {
-      width: 7px; height: 7px;
-      background: var(--text3);
+      width: 6px; height: 6px;
+      background: var(--accent);
       border-radius: 50%;
       animation: blink 1.3s ease-in-out infinite;
+      opacity: 0.4;
     }
 
     .thinking span:nth-child(2) { animation-delay: 0.18s; }
@@ -348,20 +356,21 @@
       border-top: 1px solid var(--border);
     }
 
-    #error-msg { font-size: 12px; color: #f87171; margin-bottom: 8px; min-height: 16px; }
+    #error-msg { font-size: 12px; color: #c0392b; margin-bottom: 8px; min-height: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 
     #input-wrapper {
       display: flex;
       align-items: flex-end;
       gap: 10px;
-      background: var(--bg3);
+      background: var(--bg);
       border: 1px solid var(--border-med);
-      border-radius: 14px;
+      border-radius: 6px;
       padding: 10px 12px 10px 16px;
       transition: border-color 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
 
-    #input-wrapper:focus-within { border-color: rgba(129,140,248,0.45); }
+    #input-wrapper:focus-within { border-color: rgba(26,86,160,0.5); }
 
     #input {
       flex: 1;
@@ -383,12 +392,12 @@
     #input::-webkit-scrollbar-thumb { background: var(--border); }
 
     #submit-btn {
-      width: 32px; height: 32px;
-      border-radius: 8px;
+      width: 30px; height: 30px;
+      border-radius: 5px;
       background: var(--accent-dim);
       border: none;
       color: white;
-      font-size: 16px;
+      font-size: 15px;
       cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
@@ -396,10 +405,10 @@
       line-height: 1;
     }
 
-    #submit-btn:hover:not(:disabled) { background: #4f46e5; }
+    #submit-btn:hover:not(:disabled) { background: #153f73; }
     #submit-btn:disabled { background: var(--bg4); color: var(--text3); cursor: not-allowed; }
 
-    #input-hint { margin-top: 7px; font-size: 11px; color: var(--text3); text-align: center; }
+    #input-hint { margin-top: 7px; font-size: 11px; color: var(--text3); text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
   </style>
 </head>
 <body>
@@ -468,7 +477,7 @@
   // ── Coverage map ─────────────────────────────────────────────────
   async function initCoverageMap() {
     try {
-      const res  = await fetch("http://127.0.0.1:5001/dataset/info");
+      const res  = await fetch("/dataset/info");
       const info = await res.json();
       const sw = info.lat_lon_bounds.sw;
       const ne = info.lat_lon_bounds.ne;
@@ -699,31 +708,31 @@
         data: {
           labels: chartData.labels,
           datasets: [{
-            label: "Salinity (ppt)",
+            label: "Salinity (g/L)",
             data: chartData.data,
-            borderColor: "#818cf8",
-            backgroundColor: "rgba(129,140,248,0.07)",
+            borderColor: "#1a56a0",
+            backgroundColor: "rgba(26,86,160,0.07)",
             fill: true,
             tension: 0.15,
             pointRadius: 2,
             spanGaps: true,
-            borderWidth: 2
+            borderWidth: 1.5
           }]
         },
         options: {
           responsive: true,
           plugins: {
-            legend: { labels: { color: "#94a3b8", font: { size: 12 } } }
+            legend: { labels: { color: "#4a4a4a", font: { size: 12, family: "Georgia, serif" } } }
           },
           scales: {
             x: {
-              ticks: { maxTicksLimit: 12, color: "#4a5568" },
-              grid:  { color: "rgba(255,255,255,0.04)" }
+              ticks: { maxTicksLimit: 12, color: "#666666", font: { size: 11 } },
+              grid:  { color: "rgba(0,0,0,0.06)" }
             },
             y: {
-              title: { display: true, text: "Salinity (ppt)", color: "#94a3b8" },
-              ticks: { color: "#4a5568" },
-              grid:  { color: "rgba(255,255,255,0.04)" }
+              title: { display: true, text: "Salinity (g/L)", color: "#4a4a4a", font: { size: 12 } },
+              ticks: { color: "#666666", font: { size: 11 } },
+              grid:  { color: "rgba(0,0,0,0.06)" }
             }
           }
         }
@@ -790,7 +799,7 @@
     addThinking();
 
     try {
-      const res  = await fetch("http://127.0.0.1:5001/query", {
+      const res  = await fetch("/query", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ message, history: conversationHistory })

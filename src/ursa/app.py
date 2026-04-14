@@ -2,8 +2,10 @@
 Flask server for URSA.
 Receives a user query, runs it through available tools, returns structured JSON.
 """
+import os
+import signal
 import traceback
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
 from pyproj import Transformer
@@ -11,8 +13,15 @@ from ursa.agent.orchestration import DS, run_agent
 
 load_dotenv()
 
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "frontend")
+
 app = Flask(__name__)
 CORS(app)
+
+
+@app.route("/")
+def index():
+    return send_from_directory(FRONTEND_DIR, "index.html")
 
 
 @app.route("/query", methods=["POST"])
@@ -73,5 +82,11 @@ def dataset_info():
     }), 200
 
 
+def _on_sigterm(signum, frame):
+    print("\n[SIGTERM received] Stack trace:", flush=True)
+    traceback.print_stack(frame)
+
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    app.run(debug=False, port=5001)
