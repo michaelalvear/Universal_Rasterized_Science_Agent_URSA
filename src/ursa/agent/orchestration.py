@@ -236,7 +236,7 @@ TOOL USE RULES — follow these strictly:
   before giving your final response.
 """
 
-DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"))
+DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"), chunks="auto")
 
 # ++++++++++ Console Debug Mode ++++++++++
 if __name__ == "__main__":

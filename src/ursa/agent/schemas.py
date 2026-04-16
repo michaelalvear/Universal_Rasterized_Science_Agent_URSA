@@ -17,7 +17,7 @@ class AgentState(BaseModel):
     # Allow Xarray types
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    # Ensure this is opened lazily (e.g., xr.open_dataset(path, chunks={}))
+    # Ensure this is opened lazily (e.g., xr.open_dataset(path, chunks="auto"))
     dataset: Dataset = Field(
         description="The primary NetCDF lazy-loaded dataset")
 

@@ -21,7 +21,7 @@ from ursa.agent.schemas import AgentState
 bisect_context_retriever_call = {
     "name": "bisect_context_retriever",
     "args": {
-        "query": "Salinity",
+        "query": "groundwater",
     },
     "id": "call_1",
     "type": "tool_call"
@@ -50,9 +50,9 @@ spatial_temporal_select_call = {
 filter_by_value_call = {
     "name": "filter_by_value",
     "args": {
-        "target": "salinity",
+        "target": "head",
         "symbol": ">",
-        "value": 35.0
+        "value": 0.25
     },
     "id": "call_4",
     "type": "tool_call"
@@ -146,7 +146,7 @@ graph.add_edge("tool node", END)
 app = graph.compile()
 # ++++++++++ Check Test Results ++++++++++
 load_dotenv()
-DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"))
+DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"), chunks="auto")
 my_tools = generate_tools(DS)
 
 initial_state = {
