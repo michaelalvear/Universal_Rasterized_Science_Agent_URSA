@@ -43,16 +43,6 @@ load_dotenv()  # Load environment variables
 # ++++++++++ Graph setup ++++++++++
 # Nodes (Some of the node code inspired by):
 # https://github.com/langchain-ai/how_to_fix_your_context/blob/main/notebooks/01-rag.ipynb)
-
-def user_input(state: AgentState) -> dict[str, List[HumanMessage]]:
-    """
-    Append user prompt to state
-    """
-    user_request = input("~$ ")
-
-    return {"messages": [HumanMessage(content=user_request)]}
-
-
 def end_session_router(
         state: AgentState
 ) -> Literal["session ended", "request created"]:
@@ -70,8 +60,8 @@ def llm_call(state: AgentState) -> dict[str, List[AIMessage]]:
     LLM decides whether to call a tool or not.
     """
     # Initialize Gemini Client + bind tools
-    llm = ChatGoogleGenerativeAI(model="gemini-3.1-pro-preview", temperature=0,
-                                 streaming=True).bind_tools(state.tools)
+    llm = ChatGoogleGenerativeAI(model="gemini-3.1-pro-preview",
+                                 temperature=0).bind_tools(state.tools)
 
     llm_response = llm.invoke(state.messages)
     return {"messages": [llm_response]}
@@ -95,57 +85,23 @@ def tool_router(state: AgentState) -> Literal["pending tool calls", "done"]:
 
 graph = StateGraph(AgentState)
 
-# Debug mode graph
-if __name__ == "__main__":
+# Nodes
+graph.add_node("llm call", llm_call)
+graph.add_node("tool node", ursa_tool_node)
 
-    # Nodes
-    graph.add_node("user input", user_input)
-    graph.add_node("tool node", ursa_tool_node)
-    graph.add_node("llm call", llm_call)
+# Edges
+graph.add_edge(START, "llm call")
 
-    # Edges
-    graph.add_edge(START, "user input")
+graph.add_conditional_edges(
+    "llm call",
+    tool_router,
+    {
+        "pending tool calls": "tool node",
+        "done": END
+    }
+)
 
-    graph.add_conditional_edges(
-        "user input",
-        end_session_router,
-        {
-            "session ended": END,
-            "request created": "llm call"
-        }
-    )
-
-    graph.add_conditional_edges(
-        "llm call",
-        tool_router,
-        {
-            "pending tool calls": "tool node",
-            "done": "user input"
-        }
-    )
-
-    graph.add_edge("tool node", "llm call")
-
-# Flask server graph
-else:
-
-    # Nodes
-    graph.add_node("llm call", llm_call)
-    graph.add_node("tool node", ursa_tool_node)
-
-    # Edges
-    graph.add_edge(START, "llm call")
-
-    graph.add_conditional_edges(
-        "llm call",
-        tool_router,
-        {
-            "pending tool calls": "tool node",
-            "done": END
-        }
-    )
-
-    graph.add_edge("tool node", "llm call")
+graph.add_edge("tool node", "llm call")
 
 app = graph.compile()
 
@@ -241,34 +197,45 @@ DS = xr.open_dataset(os.getenv("NETCDF_DATA_PATH"), chunks="auto")
 # ++++++++++ Console Debug Mode ++++++++++
 if __name__ == "__main__":
 
-    # Initialize state
-    inputs = {"messages": [SystemMessage(content=essential_context)],
-              "dataset": DS,
-              "tools": generate_tools(DS)
-              }
-
+    # Initialize conversation history
+    history = [SystemMessage(content=essential_context)]
     # Initialize token counter
     total_tokens = 0
 
-    # Streaming agent
-    # ('updates' mode yields the state updates after each node execution)
-    for update in app.stream(inputs, stream_mode="updates"):
+    while True:
 
-        for node_name, state_update in update.items():
-            if "messages" in state_update:
-                new_msgs = state_update["messages"]
+        user_message = HumanMessage(content=input("~$ "))
 
-                for msg in new_msgs:
-                    print(format_msg(msg))
+        if user_message.content == "exit":
+            break
 
-                    # Count tokens
-                    if isinstance(msg, AIMessage) and getattr(msg,
-                                                              "usage_metadata",
-                                                              None):
-                        total_tokens += msg.usage_metadata.get("total_tokens",
-                                                               0)
+        history.append(user_message)
 
-    # Show the conversation's cumulative token use at the end
+        # Initialize state
+        inputs = {"messages": history,
+                  "dataset": DS,
+                  "tools": generate_tools(DS)
+                  }
+
+        # Run graph
+        results = app.invoke(inputs)
+
+        # Get only the messages from the latest invocation
+        new_messages = results["messages"][len(history):]
+        history.extend(new_messages)
+
+        for msg in new_messages:
+            print(format_msg(msg))
+
+    # Count tokens
+    for msg in history:
+        if isinstance(msg, AIMessage) and getattr(msg,
+                                                  "usage_metadata",
+                                                  None):
+            total_tokens += msg.usage_metadata.get("total_tokens",
+                                                   0)
+
+    # Show the conversation's total token use at the end
     token_string = f"|Token consumption: {total_tokens}|"
     bars = '-' * len(token_string)
     print(bars)
